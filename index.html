@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#132119" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Arithmetic" />
+    <title>Arithmetic Annihilation</title>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-94373ZKHEE"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+        gtag('config', 'G-94373ZKHEE');
+    </script>
+  <script type="module" crossorigin src="/arithmetic_annihilation/assets/index-DGlFI3Lu.js"></script>
+  <link rel="stylesheet" crossorigin href="/arithmetic_annihilation/assets/index-1yf-UrwD.css">
+</head>
+
+<body>
+    <main id="app-shell">
+        <div id="game-frame">
+            <section id="game-topbar" aria-label="Game information">
+                <section id="hud" aria-label="Game status">
+                    <span class="base-status">Base <strong data-stat="health">100</strong>
+                        <span class="base-meter" role="meter" aria-label="Base life" aria-valuemin="0"
+                            aria-valuemax="100" aria-valuenow="100" data-stat="base-meter">
+                            <span data-stat="base-fill"></span>
+                        </span>
+                    </span>
+                    <span>Time <strong data-stat="time">0:00</strong></span>
+                    <span>Kills <strong data-stat="kills">0</strong></span>
+                    <span>Maths <strong data-stat="accuracy">0/0</strong></span>
+                </section>
+                <section id="game-messages" aria-live="polite">
+                    <p id="game-status-message" data-testid="game-status-message"></p>
+                </section>
+            </section>
+            <div id="game-surface">
+                <div id="game-root" data-testid="game-root"></div>
+                <section id="game-over" class="game-over" hidden data-testid="game-over">
+                    <div>
+                        <p>Base destroyed</p>
+                        <strong data-game-over-time>0:00</strong>
+                        <button type="button" class="primary-button" data-testid="restart-game-button">Restart
+                            game</button>
+                    </div>
+                </section>
+                <section id="pause-overlay" class="pause-overlay" hidden data-testid="pause-overlay">
+                    <div>
+                        <p>Paused</p>
+                        <button type="button" class="primary-button" data-testid="resume-button">Resume</button>
+                    </div>
+                </section>
+            </div>
+            <div id="topbar-controls" aria-label="Game controls">
+                <button id="music-mute-button" class="icon-button music-mute-button" type="button"
+                    aria-label="Mute music" aria-pressed="false" data-testid="music-mute-button">🔊</button>
+                <input id="music-volume-slider" class="music-volume-slider" type="range" min="0" max="100" step="1"
+                    value="10" aria-label="Music volume" data-testid="music-volume-slider" />
+                <button id="settings-button" class="icon-button settings-button" type="button" aria-label="Settings"
+                    aria-expanded="false" aria-controls="settings-popup" data-testid="settings-button">⚙</button>
+            </div>
+            <section id="settings-popup" class="settings-popup" hidden aria-label="Settings"
+                data-testid="settings-popup">
+                <h2>Settings</h2>
+                <label class="settings-field" for="spawn-rate-select">
+                    <span>Spawn rate</span>
+                    <select id="spawn-rate-select" class="settings-select" data-testid="spawn-rate-select">
+                        <option value="veryEasy">Very low</option>
+                        <option value="easy">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">High</option>
+                        <option value="veryHard">Very high</option>
+                    </select>
+                </label>
+                <label class="settings-field" for="base-difficulty-select">
+                    <span>Base difficulty</span>
+                    <select id="base-difficulty-select" class="settings-select" data-testid="base-difficulty-select">
+                        <option value="reception">Reception</option>
+                        <option value="year1">Year 1</option>
+                        <option value="year2">Year 2</option>
+                        <option value="year3" selected>Year 3</option>
+                        <option value="year4">Year 4</option>
+                        <option value="year5">Year 5</option>
+                        <option value="year6">Year 6</option>
+                    </select>
+                </label>
+            </section>
+            <section id="bottom-panel" class="bottom-panel is-open" aria-live="polite" data-testid="bottom-panel">
+                <div class="panel-toggle-row">
+                    <button class="icon-button panel-toggle" type="button" data-panel-toggle data-testid="panel-toggle"
+                        aria-label="Collapse difficulty panel" aria-expanded="true">↓</button>
+                    <p class="panel-row-title" data-testid="panel-row-title">Select which tower</p>
+                </div>
+                <div class="panel-body" data-panel-body></div>
+            </section>
+        </div>
+        <footer class="site-footer">
+            <p>
+                Maths problems generated with
+                <a href="https://github.com/RobinL/maths-game-problem-generator">maths-game-problem-generator</a>.
+            </p>
+            <p>
+                Source code for this game
+                <a href="https://github.com/RupertLinacre/arithmetic_annihilation">here</a>.
+            </p>
+        </footer>
+    </main>
+</body>
+
+</html>
