@@ -118,18 +118,6 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect(page.getByTestId('select-hard')).toContainText('Homing missile');
     await expect(page.getByTestId('select-airstrike')).toContainText('Airstrike');
 
-    for (const [key, testId] of [['1', 'select-easy'], ['2', 'select-medium'], ['3', 'select-hard'], ['4', 'select-flamethrower'], ['5', 'select-veryHard'], ['6', 'select-wall'], ['7', 'select-airstrike']] as const) {
-        await page.keyboard.press(key);
-        await expect(page.getByTestId(testId)).toHaveAttribute('aria-pressed', 'true');
-    }
-
-    const baseCell = await page.evaluate(() => window.arithmeticAnnihilation!.getBaseCell());
-    await clickGamePoint(page, baseCell.worldX, baseCell.worldY);
-    await expect(page.getByTestId('build-popup')).toBeVisible();
-    await expect(page.getByTestId('build-popup')).toContainText('Very Hard');
-    await page.getByTestId('answer-popup-close').click();
-    await expect(page.getByTestId('build-popup')).toBeHidden();
-
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('pause-overlay')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(true);
@@ -143,7 +131,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs())).toBeGreaterThan(3200);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount())).toBe(0);
 
-    await page.keyboard.press('3');
+    await page.getByTestId('select-hard').click();
 
     const buildable = await page.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
     expect(buildable).not.toBeNull();
@@ -171,6 +159,8 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await clickGamePoint(page, buildable!.worldX, buildable!.worldY);
     await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
     await expect(answerReviewInput).toBeVisible();
+    await answerReviewInput.fill('123');
+    await expect(answerReviewInput).toHaveValue('123');
     await answerReviewInput.fill('not-the-answer');
     const reviewPausedElapsedMs = await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());
     await page.waitForTimeout(150);

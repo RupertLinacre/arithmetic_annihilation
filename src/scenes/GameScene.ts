@@ -92,16 +92,6 @@ const ENEMY_TEXTURES = {
     4: { run: SPRITE_PATHS.monster4Run, stop: SPRITE_PATHS.monster4Stop, hurt: SPRITE_PATHS.monster4Hurt },
 } as const;
 
-const BUILD_SHORTCUTS: Record<string, BuildTowerSelection> = {
-    '1': 'easy',
-    '2': 'spray',
-    '3': 'missile',
-    '4': 'flamethrower',
-    '5': 'cluster',
-    '6': 'wall',
-    '7': 'airstrike',
-};
-
 const TOWER_SPRITE_MAX_SIZE = GAME_CONFIG.map.cellSize * 1.2;
 const ENEMY_SPRITE_MIN_SIZE = GAME_CONFIG.map.cellSize * 0.9;
 const ENEMY_SPRITE_MAX_SIZE = GAME_CONFIG.map.cellSize * 1.28;
@@ -562,14 +552,6 @@ export class GameScene extends Phaser.Scene {
 
     private registerDebugKeys(): void {
         const keyboard = this.input.keyboard;
-        keyboard?.on('keydown', (event: KeyboardEvent) => {
-            const selection = BUILD_SHORTCUTS[event.key];
-            if (!selection) {
-                return;
-            }
-            this.panel.setSelectedBuildDifficulty(selection);
-            event.preventDefault();
-        });
         keyboard?.on('keydown-G', () => { this.debug.grid = !this.debug.grid; });
         keyboard?.on('keydown-R', () => { this.debug.ranges = !this.debug.ranges; });
         keyboard?.on('keydown-L', () => { this.debug.los = !this.debug.los; });
