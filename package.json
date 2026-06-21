@@ -16,7 +16,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "maths-game-problem-generator": "github:RobinL/maths-game-problem-generator#codex/multiple-choice-answers",
+    "maths-game-problem-generator": "1.1.0",
     "phaser": "latest",
     "vite": "latest"
   },

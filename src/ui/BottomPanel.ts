@@ -130,6 +130,10 @@ export class BottomPanel {
         return this.selectedBuildTower;
     }
 
+    getCurrentQuestionAnswer(): string | undefined {
+        return this.currentQuestion?.correctAnswer;
+    }
+
     private showQuestion(action: PendingAction): void {
         this.clearPendingClose();
         this.correctionRequired = false;
@@ -140,12 +144,12 @@ export class BottomPanel {
         this.showAnswerPopup();
     }
 
-    private answer(choice: string): void {
+    private answer(answer: string): void {
         if (!this.currentQuestion || !this.pendingAction) {
             return;
         }
 
-        const correct = choice === this.currentQuestion.correctAnswer;
+        const correct = this.isCorrectAnswer(answer);
         this.callbacks.onAnswered(correct);
         if (correct) {
             this.setQuestionActive(false);
@@ -195,19 +199,18 @@ export class BottomPanel {
         header.append(closeButton);
 
         const questionText = this.createQuestionText(this.currentQuestion);
-        const row = this.createDiv('build-popup-actions answer-popup-actions');
-        this.currentQuestion.choices.forEach((choice) => {
-            const button = this.createButton('choice-button', choice, 'answer-button');
-            button.dataset.correct = String(choice === this.currentQuestion?.correctAnswer);
-            button.addEventListener('click', () => this.answer(choice));
-            row.append(button);
-        });
+        const answerControl = this.mobile
+            ? this.createChoiceButtons(this.currentQuestion)
+            : this.createAnswerInput(this.currentQuestion, 'answer-input');
 
-        this.buildMenu.append(header, questionText, row);
+        this.buildMenu.append(header, questionText, answerControl);
         this.buildMenu.hidden = false;
         this.buildMenu.classList.add('is-answer-popup');
         this.buildMenu.classList.add('is-open');
         this.positionBuildMenu(this.popupAnchor);
+        if (!this.mobile) {
+            answerControl.focus();
+        }
     }
 
     private showIncorrectAnswerPopup(action: PendingAction): void {
@@ -241,7 +244,7 @@ export class BottomPanel {
                 return;
             }
 
-            if (this.normalizeAnswerInput(answerInput.value) !== this.normalizeAnswerInput(this.currentQuestion.correctAnswer)) {
+            if (!this.isCorrectAnswer(answerInput.value)) {
                 return;
             }
 
@@ -328,6 +331,51 @@ export class BottomPanel {
 
     private normalizeAnswerInput(value: string): string {
         return value.trim().replace(/\s+/g, '').toLowerCase();
+    }
+
+    private isCorrectAnswer(answer: string): boolean {
+        if (!this.currentQuestion) {
+            return false;
+        }
+        return this.normalizeAnswerInput(answer) === this.normalizeAnswerInput(this.currentQuestion.correctAnswer);
+    }
+
+    private createChoiceButtons(question: MathsQuestion): HTMLDivElement {
+        const row = this.createDiv('build-popup-actions answer-popup-actions');
+        question.choices.forEach((choice) => {
+            const button = this.createButton('choice-button', choice, 'answer-button');
+            button.dataset.correct = String(choice === question.correctAnswer);
+            button.addEventListener('click', () => this.answer(choice));
+            row.append(button);
+        });
+        return row;
+    }
+
+    private createAnswerInput(question: MathsQuestion, testId: string): HTMLInputElement {
+        const answerInput = document.createElement('input');
+        answerInput.type = 'text';
+        answerInput.inputMode = 'numeric';
+        answerInput.className = 'answer-review-input';
+        answerInput.dataset.testid = testId;
+        answerInput.setAttribute('aria-label', 'Type the answer');
+        answerInput.setAttribute('autocomplete', 'off');
+        answerInput.setAttribute('autocapitalize', 'off');
+        answerInput.setAttribute('autocorrect', 'off');
+        answerInput.setAttribute('spellcheck', 'false');
+        answerInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') {
+                return;
+            }
+
+            event.preventDefault();
+            this.answer(answerInput.value);
+        });
+        answerInput.addEventListener('input', () => {
+            if (this.normalizeAnswerInput(answerInput.value) === this.normalizeAnswerInput(question.correctAnswer)) {
+                this.answer(answerInput.value);
+            }
+        });
+        return answerInput;
     }
 
     private positionBuildMenu(anchor: Vec2): void {

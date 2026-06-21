@@ -12,6 +12,7 @@ declare global {
         arithmeticAnnihilation?: {
             getFirstBuildableCell: () => BuildableCell | null;
             getBaseCell: () => BuildableCell;
+            getCanvasPointForWorldPoint: (worldX: number, worldY: number) => { x: number; y: number };
             getTowerCount: () => number;
             getTowerTypes: () => string[];
             getEnemyCount: () => number;
@@ -19,6 +20,7 @@ declare global {
             getBaseHealth: () => number;
             getElapsedMs: () => number;
             isPaused: () => boolean;
+            getCurrentQuestionAnswer: () => string | undefined;
             getSpawnRate: () => string;
             setSpawnRate: (spawnRate: 'veryEasy' | 'easy' | 'medium' | 'hard' | 'veryHard') => void;
             getBaseDifficulty: () => string;
@@ -28,6 +30,7 @@ declare global {
             getMusicVolume: () => number;
             setMusicVolume: (volume: number) => void;
             spawnEnemyNearBase: () => void;
+            openFirstBuildQuestion: () => boolean;
         };
     }
 }
@@ -40,6 +43,20 @@ async function clickGamePoint(page: Page, worldX: number, worldY: number): Promi
     }
     const size = await canvas.evaluate((element) => ({ width: (element as HTMLCanvasElement).width, height: (element as HTMLCanvasElement).height }));
     await page.mouse.click(box.x + worldX * (box.width / size.width), box.y + worldY * (box.height / size.height));
+}
+
+async function clickWorldPoint(page: Page, worldX: number, worldY: number): Promise<void> {
+    const canvas = page.locator('canvas');
+    const box = await canvas.boundingBox();
+    if (!box) {
+        throw new Error('Canvas was not visible.');
+    }
+    const size = await canvas.evaluate((element) => ({ width: (element as HTMLCanvasElement).width, height: (element as HTMLCanvasElement).height }));
+    const point = await page.evaluate(
+        ([x, y]) => window.arithmeticAnnihilation!.getCanvasPointForWorldPoint(x, y),
+        [worldX, worldY] as const,
+    );
+    await page.mouse.click(box.x + point.x * (box.width / size.width), box.y + point.y * (box.height / size.height));
 }
 
 test('arithmetic tower defence MVP is playable in the browser', async ({ page }) => {
@@ -135,7 +152,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
 
     const buildable = await page.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
     expect(buildable).not.toBeNull();
-    await clickGamePoint(page, buildable!.worldX, buildable!.worldY);
+    await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
     await expect(page.getByTestId('build-popup')).toBeVisible();
     await expect(page.getByTestId('build-popup')).toContainText('Hard');
     await expect(page.getByTestId('pause-overlay')).toBeHidden();
@@ -147,16 +164,22 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect(page.locator('[data-testid="build-popup"] .definition')).toBeVisible();
     await expect(page.getByText('Pick the word')).toHaveCount(0);
     const definitionText = await page.locator('[data-testid="build-popup"] .definition').textContent();
-    const correctAnswer = await page.locator('[data-testid="answer-button"][data-correct="true"]').textContent();
+    const correctAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    expect(correctAnswer).toBeTruthy();
     expect(definitionText).toContain('=');
-    await page.locator('[data-testid="answer-button"][data-correct="false"]').first().click();
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
+    const answerInput = page.getByTestId('answer-input');
+    await expect(answerInput).toBeVisible();
+    await expect(answerInput).toBeFocused();
+    await answerInput.fill('not-the-answer');
+    await answerInput.press('Enter');
     await expect(page.getByTestId('build-popup')).toContainText(definitionText ?? '');
     await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
     await expect(page.getByTestId('answer-review-close')).toHaveCount(0);
     const answerReviewInput = page.getByTestId('answer-review-input');
     await expect(answerReviewInput).toBeVisible();
     await expect(answerReviewInput).toBeFocused();
-    await clickGamePoint(page, buildable!.worldX, buildable!.worldY);
+    await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
     await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
     await expect(answerReviewInput).toBeVisible();
     await answerReviewInput.fill('123');
@@ -166,8 +189,11 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await page.waitForTimeout(150);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs())).toBe(reviewPausedElapsedMs);
     await answerReviewInput.fill(`  ${correctAnswer} `);
-    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
-    await page.locator('[data-testid="answer-button"][data-correct="true"]').click();
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
+    await expect(page.getByTestId('answer-input')).toBeVisible();
+    const nextCorrectAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    expect(nextCorrectAnswer).toBeTruthy();
+    await page.getByTestId('answer-input').fill(` ${nextCorrectAnswer} `);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(false);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTypes())).toEqual(['missile']);
@@ -177,8 +203,10 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     expect(secondBuildable).not.toBeNull();
     await clickGamePoint(page, secondBuildable!.worldX, secondBuildable!.worldY);
     await expect(page.getByTestId('build-popup')).toBeVisible();
-    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
-    await page.locator('[data-testid="answer-button"][data-correct="true"]').click();
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
+    const secondCorrectAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    expect(secondCorrectAnswer).toBeTruthy();
+    await page.getByTestId('answer-input').fill(secondCorrectAnswer!);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTypes())).toEqual(['missile', 'missile']);
 
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount())).toBeGreaterThan(0);
@@ -210,4 +238,50 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect(page.locator('[data-stat="health"]')).toHaveText('100');
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getBaseHealth())).toBe(100);
     expect(errors).toEqual([]);
+});
+
+test('mobile answer flow keeps choices and requires typed correction after a wrong tap', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 480 });
+    await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: () => 1 });
+        Object.defineProperty(window, 'ontouchstart', { configurable: true, value: null });
+        const originalMatchMedia = window.matchMedia.bind(window);
+        window.matchMedia = (query: string) => {
+            if (query === '(pointer: coarse)' || query === '(hover: none)') {
+                return {
+                    matches: true,
+                    media: query,
+                    onchange: null,
+                    addListener: () => undefined,
+                    removeListener: () => undefined,
+                    addEventListener: () => undefined,
+                    removeEventListener: () => undefined,
+                    dispatchEvent: () => false,
+                } as MediaQueryList;
+            }
+            return originalMatchMedia(query);
+        };
+    });
+
+    await page.goto('/?seed=e2e-mobile');
+    await expect(page.locator('html')).toHaveClass(/is-mobile/);
+    await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+
+    expect(await page.evaluate(() => window.arithmeticAnnihilation!.openFirstBuildQuestion())).toBe(true);
+    await expect(page.getByTestId('build-popup')).toBeVisible();
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
+    await expect(page.getByTestId('answer-input')).toHaveCount(0);
+
+    const correctAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    expect(correctAnswer).toBeTruthy();
+    await page.locator('[data-testid="answer-button"][data-correct="false"]').first().click();
+    await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
+    const answerReviewInput = page.getByTestId('answer-review-input');
+    await expect(answerReviewInput).toBeVisible();
+    await expect(answerReviewInput).toBeFocused();
+    await answerReviewInput.fill('nope');
+    await expect(answerReviewInput).toHaveValue('nope');
+    await answerReviewInput.fill(correctAnswer!);
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
+    await expect(page.getByTestId('answer-input')).toHaveCount(0);
 });

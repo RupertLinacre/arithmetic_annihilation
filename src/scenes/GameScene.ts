@@ -1417,21 +1417,29 @@ export class GameScene extends Phaser.Scene {
     }
 
     private installBrowserHooks(): void {
-        const hooks = {
-            getFirstBuildableCell: () => {
-                for (let y = 3; y < this.generatedMap.grid.rows; y += 1) {
-                    for (let x = 3; x < this.generatedMap.grid.cols; x += 1) {
-                        if (this.canBuildOnCell({ x, y }) && !this.findTowerAt(x, y)) {
-                            const center = cellCenter({ x, y }, GAME_CONFIG.map);
-                            return { x, y, worldX: center.x, worldY: center.y };
-                        }
+        const getFirstBuildableCell = () => {
+            for (let y = 3; y < this.generatedMap.grid.rows; y += 1) {
+                for (let x = 3; x < this.generatedMap.grid.cols; x += 1) {
+                    if (this.canBuildOnCell({ x, y }) && !this.findTowerAt(x, y)) {
+                        const center = cellCenter({ x, y }, GAME_CONFIG.map);
+                        return { x, y, worldX: center.x, worldY: center.y };
                     }
                 }
-                return null;
-            },
+            }
+            return null;
+        };
+        const hooks = {
+            getFirstBuildableCell,
             getBaseCell: () => {
                 const center = cellCenter(this.generatedMap.base, GAME_CONFIG.map);
                 return { ...this.generatedMap.base, worldX: center.x, worldY: center.y };
+            },
+            getCanvasPointForWorldPoint: (worldX: number, worldY: number) => {
+                const camera = this.cameras.main;
+                return {
+                    x: (worldX - camera.scrollX) * camera.zoom,
+                    y: (worldY - camera.scrollY) * camera.zoom,
+                };
             },
             getTowerCount: () => this.towers.length,
             getTowerTypes: () => this.towers.map((tower) => tower.type),
@@ -1440,6 +1448,7 @@ export class GameScene extends Phaser.Scene {
             getBaseHealth: () => this.baseHealth,
             getElapsedMs: () => this.elapsedMs,
             isPaused: () => this.isPaused,
+            getCurrentQuestionAnswer: () => this.panel.getCurrentQuestionAnswer(),
             getSpawnRate: () => this.spawnRate,
             setSpawnRate: (spawnRate: GameDifficulty) => this.setSpawnRate(spawnRate),
             getBaseDifficulty: () => this.baseDifficulty,
@@ -1451,6 +1460,15 @@ export class GameScene extends Phaser.Scene {
             getDifficulty: () => this.spawnRate,
             setDifficulty: (difficulty: GameDifficulty) => this.setSpawnRate(difficulty),
             spawnEnemyNearBase: () => this.spawnEnemyNearBase(),
+            openFirstBuildQuestion: () => {
+                const cell = getFirstBuildableCell();
+                if (!cell) {
+                    return false;
+                }
+                this.panel.openBuild({ x: cell.x, y: cell.y }, { x: 0, y: 0 });
+                this.render();
+                return true;
+            },
         };
         (window as unknown as { arithmeticAnnihilation: typeof hooks }).arithmeticAnnihilation = hooks;
     }
