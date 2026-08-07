@@ -3,13 +3,25 @@ import { GAME_CONFIG } from '../../src/config/gameConfig';
 import { getBaseFootprint } from '../../src/map/BaseFootprint';
 import { Grid, cellCenter, countBuildableCells, terrainMovementCost } from '../../src/map/Grid';
 import { hasLineOfSight } from '../../src/map/LineOfSight';
-import { generateMap, hasPathToBase } from '../../src/map/MapGenerator';
+import { generateMap, generateMultiplayerMap, hasPathToBase } from '../../src/map/MapGenerator';
 
 describe('map generation and grid rules', () => {
     it('generates a valid map with reachable spawn points and build space', () => {
         const map = generateMap(12345);
         expect(map.spawns.every((spawn) => hasPathToBase(map.grid, spawn, map.base))).toBe(true);
         expect(countBuildableCells(map.grid)).toBeGreaterThan(Math.floor(map.grid.cols * map.grid.rows * 0.6));
+    });
+
+    it('keeps the multiplayer arena 24x14, mirrored, and reachable between both bases', () => {
+        const map = generateMultiplayerMap(24680);
+        expect(map.grid.cols).toBe(24);
+        expect(map.grid.rows).toBe(14);
+        expect(map.bases).toEqual({ solar: { x: 1, y: 7 }, lunar: { x: 22, y: 7 } });
+        expect(hasPathToBase(map.grid, map.bases!.solar, map.bases!.lunar)).toBe(true);
+        expect(hasPathToBase(map.grid, map.bases!.lunar, map.bases!.solar)).toBe(true);
+        map.grid.forEachCell((x, y, terrain) => {
+            expect(map.grid.getTerrain(map.grid.cols - 1 - x, y)).toBe(terrain);
+        });
     });
 
     it('treats the base as a 3x3 footprint for reachability', () => {

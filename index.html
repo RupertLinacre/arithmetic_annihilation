@@ -10,6 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Arithmetic" />
+    <link rel="icon" href="/arithmetic_annihilation/icons/icon-192.png" />
     <title>Arithmetic Annihilation</title>
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-94373ZKHEE"></script>
     <script>
@@ -22,15 +23,61 @@
 
 <body>
     <main id="app-shell">
-        <div id="game-frame">
+        <section id="mode-screen" class="mode-screen" aria-labelledby="mode-title" data-testid="mode-screen">
+            <div class="mode-card">
+                <p class="mode-kicker">Maths tower defence</p>
+                <h1 id="mode-title">Arithmetic <span>Annihilation</span></h1>
+                <p class="mode-intro">Build towers by solving maths problems, then hold the line.</p>
+                <div class="mode-actions" data-mode-actions>
+                    <button type="button" class="mode-choice primary-button" data-testid="single-player-button">
+                        <strong>One player</strong><span>Play the original game</span>
+                    </button>
+                    <button type="button" class="mode-choice primary-button" data-testid="two-player-button">
+                        <strong>Two players</strong><span>Play a friend with an invite code</span>
+                    </button>
+                </div>
+                <form class="multiplayer-setup" hidden data-multiplayer-setup>
+                    <label><span>Your name</span><input name="player-name" maxlength="18" value="Commander" autocomplete="nickname" /></label>
+                    <label><span>Your maths level</span>
+                        <select name="maths-level">
+                            <option value="reception">Reception</option><option value="year1">Year 1</option>
+                            <option value="year2">Year 2</option><option value="year3" selected>Year 3</option>
+                            <option value="year4">Year 4</option><option value="year5">Year 5</option><option value="year6">Year 6</option>
+                        </select>
+                    </label>
+                    <button type="button" class="primary-button" data-testid="computer-match-button">Versus computer</button>
+                    <div class="setup-divider"><span>or play a friend</span></div>
+                    <button type="button" class="primary-button" data-testid="create-match-button">Create a match</button>
+                    <div class="setup-divider"><span>or join a friend</span></div>
+                    <div class="join-code-row">
+                        <input name="invite-code" aria-label="Six-character invite code" placeholder="ABC123" maxlength="6" autocomplete="off" />
+                        <button type="button" class="primary-button" data-testid="join-match-button">Join</button>
+                    </div>
+                    <button type="button" class="mode-back" data-mode-back>← Back</button>
+                </form>
+                <section class="lobby-panel" hidden data-lobby-panel aria-live="polite">
+                    <p class="mode-kicker">Private peer-to-peer lobby</p>
+                    <h2 data-lobby-heading>Your game is ready</h2>
+                    <div class="invite-code-panel"><span>Invite code</span><strong data-invite-code>------</strong>
+                        <button type="button" data-copy-invite>Copy</button>
+                    </div>
+                    <div class="lobby-players" data-lobby-players></div>
+                    <p class="lobby-status" data-lobby-status>Opening lobby…</p>
+                    <button type="button" class="primary-button" data-start-match disabled>Start game</button>
+                    <button type="button" class="mode-back" data-leave-lobby>Leave lobby</button>
+                </section>
+            </div>
+        </section>
+        <div id="game-frame" hidden>
             <section id="game-topbar" aria-label="Game information">
                 <section id="hud" aria-label="Game status">
-                    <span class="base-status">Base <strong data-stat="health">100</strong>
+                    <span class="base-status"><span data-stat="base-label">Base</span> <strong data-stat="health">100</strong>
                         <span class="base-meter" role="meter" aria-label="Base life" aria-valuemin="0"
                             aria-valuemax="100" aria-valuenow="100" data-stat="base-meter">
                             <span data-stat="base-fill"></span>
                         </span>
                     </span>
+                    <span class="rival-base-status" hidden data-stat="rival-base-status">Rival <strong data-stat="rival-health">100</strong></span>
                     <span>Time <strong data-stat="time">0:00</strong></span>
                     <span>Kills <strong data-stat="kills">0</strong></span>
                     <span>Maths <strong data-stat="accuracy">0/0</strong></span>
@@ -43,7 +90,7 @@
                 <div id="game-root" data-testid="game-root"></div>
                 <section id="game-over" class="game-over" hidden data-testid="game-over">
                     <div>
-                        <p>Base destroyed</p>
+                        <p data-game-over-message>Base destroyed</p>
                         <strong data-game-over-time>0:00</strong>
                         <button type="button" class="primary-button" data-testid="restart-game-button">Restart
                             game</button>

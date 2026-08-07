@@ -1,5 +1,9 @@
 export type TerrainType = 'tree' | 'grass' | 'tarmac';
 
+export type TeamId = 'solar' | 'lunar';
+
+export type MonsterGeneratorType = 'scout' | 'grunt' | 'tank' | 'titan';
+
 export type TowerDifficulty = 'easy' | 'medium' | 'hard' | 'veryHard';
 
 export type TowerType = 'easy' | 'spray' | 'missile' | 'flamethrower' | 'cluster' | 'wall' | 'airstrike';
@@ -35,6 +39,7 @@ export interface TowerState {
     maxHealth?: number;
     baseTerrain?: TerrainType;
     flameAngleRadians?: number;
+    teamId?: TeamId;
 }
 
 export interface EnemyState {
@@ -60,6 +65,8 @@ export interface EnemyState {
     burnDamagePerSecond?: number;
     burnSpreadRadius?: number;
     burnSpreadCooldownMs?: number;
+    teamId?: TeamId;
+    visualTier?: 1 | 2 | 3 | 4;
 }
 
 export interface ProjectileState {
@@ -85,6 +92,7 @@ export interface ProjectileState {
     fragmentCount?: number;
     fragmentDamage?: number;
     emitAccumMs?: number;
+    teamId?: TeamId;
 }
 
 export interface MathsQuestion {
@@ -95,4 +103,61 @@ export interface MathsQuestion {
     expressionShort: string;
     correctAnswer: string;
     choices: string[];
+}
+
+export interface MonsterGeneratorState {
+    teamId: TeamId;
+    level: number;
+    progress: number;
+    spawnCount: number;
+}
+
+export interface MultiplayerStats {
+    kills: number;
+    answered: number;
+    correctAnswers: number;
+}
+
+export interface MultiplayerSnapshot {
+    tick: number;
+    elapsedMs: number;
+    baseHealth: Record<TeamId, number>;
+    towers: TowerState[];
+    enemies: EnemyState[];
+    projectiles: ProjectileState[];
+    explosions: Array<{ x: number; y: number; radius: number; lifeMs: number }>;
+    generators: MonsterGeneratorState[];
+    stats: Record<TeamId, MultiplayerStats>;
+    gameOver: boolean;
+    winner?: TeamId;
+    pendingCommands: ScheduledMultiplayerCommand[];
+    pendingAirstrikes: Array<{
+        id: number;
+        target: GridPoint;
+        elapsedMs: number;
+        delayMs: number;
+        start: Vec2;
+        end: Vec2;
+        teamId?: TeamId;
+    }>;
+    rngState: number;
+    nextIds: {
+        tower: number;
+        airstrike: number;
+        enemy: number;
+        towerProjectile: number;
+        fragmentProjectile: number;
+    };
+}
+
+export type MultiplayerCommand =
+    | { kind: 'build'; teamId: TeamId; cell: GridPoint; towerType: TowerType }
+    | { kind: 'upgrade'; teamId: TeamId; towerId: number }
+    | { kind: 'upgradeGenerator'; teamId: TeamId }
+    | { kind: 'answer'; teamId: TeamId; correct: boolean };
+
+export interface ScheduledMultiplayerCommand {
+    id: string;
+    tick: number;
+    command: MultiplayerCommand;
 }

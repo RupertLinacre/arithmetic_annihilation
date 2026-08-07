@@ -1,11 +1,11 @@
 import { ENEMY_STATS, GAME_CONFIG } from '../config/gameConfig';
-import type { EnemyState, EnemyType, GridPoint, MapGeometry, Vec2 } from '../types';
+import type { EnemyState, EnemyType, GridPoint, MapGeometry, TeamId, Vec2 } from '../types';
 import { getBaseFootprint, isBaseFootprintCell } from '../map/BaseFootprint';
 import type { FlowField } from '../pathfinding/FlowField';
 import { sampleFlowDirection } from '../pathfinding/FlowField';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 
-export function createEnemy(id: number, type: EnemyType, x: number, y: number, healthScale = 1): EnemyState {
+export function createEnemy(id: number, type: EnemyType, x: number, y: number, healthScale = 1, teamId?: TeamId): EnemyState {
     const stats = ENEMY_STATS[type];
     return {
         id,
@@ -26,6 +26,7 @@ export function createEnemy(id: number, type: EnemyType, x: number, y: number, h
         panicStartDistance: Number.POSITIVE_INFINITY,
         isStuck: false,
         lastMoveSpeed: 0,
+        teamId,
     };
 }
 

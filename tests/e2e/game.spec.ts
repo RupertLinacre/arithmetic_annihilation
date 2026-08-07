@@ -13,10 +13,19 @@ declare global {
             getFirstBuildableCell: () => BuildableCell | null;
             getBaseCell: () => BuildableCell;
             getCanvasPointForWorldPoint: (worldX: number, worldY: number) => { x: number; y: number };
+            getMapViewportBounds: () => { left: number; top: number; right: number; bottom: number };
             getTowerCount: () => number;
             getTowerTypes: () => string[];
             getEnemyCount: () => number;
             getEnemySnapshot: () => { id: number; x: number; y: number; health: number }[];
+            getGeneratorLevel: () => number;
+            getGeneratorLevels: () => { solar: number; lunar: number };
+            getMultiplayerResyncCount: () => number;
+            isComputerOpponent: () => boolean;
+            getTerrainTextureKeys: () => string[];
+            getBaseTextureKeys: () => { solar: string; lunar: string };
+            getTowerTextureKeys: () => string[];
+            getEnemyTextureKeys: () => string[];
             getBaseHealth: () => number;
             getElapsedMs: () => number;
             isPaused: () => boolean;
@@ -45,6 +54,12 @@ async function clickGamePoint(page: Page, worldX: number, worldY: number): Promi
     await page.mouse.click(box.x + worldX * (box.width / size.width), box.y + worldY * (box.height / size.height));
 }
 
+async function startSinglePlayer(page: Page): Promise<void> {
+    await expect(page.getByTestId('mode-screen')).toBeVisible();
+    await page.getByTestId('single-player-button').click();
+    await expect(page.locator('canvas')).toBeVisible();
+}
+
 async function clickWorldPoint(page: Page, worldX: number, worldY: number): Promise<void> {
     const canvas = page.locator('canvas');
     const box = await canvas.boundingBox();
@@ -69,7 +84,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     page.on('pageerror', (error) => errors.push(error.message));
 
     await page.goto('/?seed=e2e');
-    await expect(page.locator('canvas')).toBeVisible();
+    await startSinglePlayer(page);
     await expect(page.locator('[data-stat="health"]')).toHaveText(/\d+/);
     await expect(page.locator('[data-stat="base-meter"]')).toBeVisible();
     await expect(page.getByTestId('game-status-message')).toHaveText('Click on a square to place a tower to start game.');
@@ -233,6 +248,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect(page.getByTestId('restart-game-button')).toBeVisible();
     await page.getByTestId('restart-game-button').click();
     await page.waitForLoadState('domcontentloaded');
+    await expect(page.locator('canvas')).toBeVisible();
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     await expect(page.getByTestId('game-over')).toBeHidden();
     await expect(page.locator('[data-stat="health"]')).toHaveText('100');
@@ -241,7 +257,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
 });
 
 test('mobile answer flow keeps choices and requires typed correction after a wrong tap', async ({ page }) => {
-    await page.setViewportSize({ width: 900, height: 480 });
+    await page.setViewportSize({ width: 844, height: 390 });
     await page.addInitScript(() => {
         Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: () => 1 });
         Object.defineProperty(window, 'ontouchstart', { configurable: true, value: null });
@@ -265,7 +281,39 @@ test('mobile answer flow keeps choices and requires typed correction after a wro
 
     await page.goto('/?seed=e2e-mobile');
     await expect(page.locator('html')).toHaveClass(/is-mobile/);
+    const splashSize = await page.getByTestId('mode-screen').evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        overflowY: getComputedStyle(element).overflowY,
+    }));
+    expect(splashSize.scrollHeight).toBeLessThanOrEqual(splashSize.clientHeight);
+    expect(splashSize.overflowY).toBe('auto');
+
+    await page.getByTestId('two-player-button').click();
+    await expect(page.locator('[data-multiplayer-setup]')).toBeVisible();
+    const multiplayerSetupSize = await page.getByTestId('mode-screen').evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+    }));
+    expect(multiplayerSetupSize.scrollHeight).toBeLessThanOrEqual(multiplayerSetupSize.clientHeight);
+    await page.locator('[data-mode-back]').click();
+
+    await startSinglePlayer(page);
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+    const mobileLayout = await page.evaluate(() => ({
+        frameTop: document.querySelector('#game-frame')!.getBoundingClientRect().top,
+        canvasTop: document.querySelector('canvas')!.getBoundingClientRect().top,
+        towerIconHeight: document.querySelector('[data-testid="select-easy"] .tower-selector-image')!.getBoundingClientRect().height,
+    }));
+    expect(mobileLayout.frameTop).toBe(0);
+    expect(mobileLayout.canvasTop).toBe(0);
+    expect(mobileLayout.towerIconHeight).toBeGreaterThanOrEqual(37);
+    const mapBounds = await page.evaluate(() => window.arithmeticAnnihilation!.getMapViewportBounds());
+    expect(mapBounds.left).toBeGreaterThanOrEqual(0);
+    expect(mapBounds.top).toBeGreaterThanOrEqual(-0.5);
+    expect(mapBounds.top).toBeLessThanOrEqual(0.5);
+    expect(mapBounds.right).toBeLessThanOrEqual(1280);
+    expect(mapBounds.bottom).toBeLessThanOrEqual(800);
 
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.openFirstBuildQuestion())).toBe(true);
     await expect(page.getByTestId('build-popup')).toBeVisible();
@@ -284,4 +332,114 @@ test('mobile answer flow keeps choices and requires typed correction after a wro
     await answerReviewInput.fill(correctAnswer!);
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
     await expect(page.getByTestId('answer-input')).toHaveCount(0);
+});
+
+test('versus computer starts a local multiplayer battle with opponent visuals', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+        if (message.type() === 'error') errors.push(message.text());
+    });
+
+    await page.goto('/');
+    await page.getByTestId('two-player-button').click();
+    await expect(page.getByTestId('computer-match-button')).toBeVisible();
+    await page.getByTestId('computer-match-button').click();
+    await expect(page.locator('canvas')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+    expect(await page.evaluate(() => window.arithmeticAnnihilation!.isComputerOpponent())).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevels().lunar)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount())).toBeGreaterThan(0);
+
+    const visualKeys = await page.evaluate(() => ({
+        terrain: window.arithmeticAnnihilation!.getTerrainTextureKeys(),
+        bases: window.arithmeticAnnihilation!.getBaseTextureKeys(),
+        towers: window.arithmeticAnnihilation!.getTowerTextureKeys(),
+        enemies: window.arithmeticAnnihilation!.getEnemyTextureKeys(),
+    }));
+    expect(visualKeys.terrain.some((key) => key.startsWith('opponent:'))).toBe(true);
+    expect(visualKeys.terrain.some((key) => !key.startsWith('opponent:'))).toBe(true);
+    expect(visualKeys.bases.solar.startsWith('opponent:')).toBe(false);
+    expect(visualKeys.bases.lunar.startsWith('opponent:')).toBe(true);
+    expect(visualKeys.towers.every((key) => key.startsWith('opponent:'))).toBe(true);
+    expect(visualKeys.enemies.every((key) => key.startsWith('opponent:'))).toBe(true);
+    expect(errors).toEqual([]);
+});
+
+test('two players share scheduled actions and continue simulating locally', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const host = await context.newPage();
+    const guest = await context.newPage();
+    const errors: string[] = [];
+    for (const page of [host, guest]) {
+        page.on('pageerror', (error) => errors.push(error.message));
+        page.on('console', (message) => {
+            if (message.type() === 'error') errors.push(message.text());
+        });
+    }
+
+    await host.goto('/');
+    await host.getByTestId('two-player-button').click();
+    await host.getByTestId('create-match-button').click();
+    const code = (await host.locator('[data-invite-code]').textContent())!.trim();
+    expect(code).toMatch(/^[A-Z2-9]{6}$/);
+
+    await guest.goto('/');
+    await guest.getByTestId('two-player-button').click();
+    await guest.locator('[name="player-name"]').fill('Guest');
+    await guest.locator('[name="invite-code"]').fill(code);
+    await guest.getByTestId('join-match-button').click();
+
+    await expect(host.locator('[data-start-match]')).toBeEnabled({ timeout: 20_000 });
+    await host.locator('[data-start-match]').click();
+    await expect(host.locator('canvas')).toBeVisible({ timeout: 20_000 });
+    await expect(guest.locator('canvas')).toBeVisible({ timeout: 20_000 });
+    await expect(host.locator('[data-generator-button]')).toBeVisible();
+    await expect(guest.locator('[data-generator-button]')).toBeVisible();
+    await expect(host.locator('.difficulty-selector-row > button').first()).toHaveAttribute('data-generator-button', '');
+    await expect(host.getByTestId('select-wall')).toBeVisible();
+    await expect(host.getByTestId('select-airstrike')).toBeVisible();
+    await expect(host.locator('[data-stat="rival-base-status"]')).toBeVisible();
+    await expect(guest.locator('[data-stat="rival-base-status"]')).toBeVisible();
+
+    await expect.poll(() => guest.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+    const guestCell = await guest.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
+    expect(guestCell).not.toBeNull();
+    expect(guestCell!.x).toBeGreaterThanOrEqual(12);
+    await clickWorldPoint(guest, guestCell!.worldX, guestCell!.worldY);
+    const answer = await guest.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    expect(answer).toBeTruthy();
+    await guest.getByTestId('answer-input').fill(answer!);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(1);
+    await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(1);
+
+    const hostCell = await host.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
+    expect(hostCell).not.toBeNull();
+    expect(hostCell!.x).toBeLessThan(12);
+    await clickWorldPoint(host, hostCell!.worldX, hostCell!.worldY);
+    const hostAnswer = await host.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await host.getByTestId('answer-input').fill(hostAnswer!);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(2);
+    await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(2);
+
+    const enemyCountBefore = await host.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount());
+    await host.locator('[data-generator-button]').click();
+    const generatorAnswer = await host.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await host.getByTestId('answer-input').fill(generatorAnswer!);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevel()), { timeout: 20_000 }).toBe(1);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount()), { timeout: 20_000 }).toBeGreaterThan(enemyCountBefore);
+    await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount()), { timeout: 20_000 }).toBeGreaterThan(enemyCountBefore);
+    await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs()), { timeout: 5_000 }).toBeGreaterThan(2_200);
+    expect(await guest.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerResyncCount())).toBe(0);
+    expect(errors).toEqual([]);
+
+    const guestElapsedBeforeDisconnect = await guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());
+    await host.close();
+    await expect.poll(
+        () => guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs()),
+        { timeout: 5_000 },
+    ).toBeGreaterThan(guestElapsedBeforeDisconnect + 400);
+
+    await context.close();
 });

@@ -1,12 +1,12 @@
-import type { EnemyState, MapGeometry, TowerDifficulty, TowerState, TowerType } from '../types';
+import type { EnemyState, MapGeometry, TeamId, TowerDifficulty, TowerState, TowerType } from '../types';
 import { GAME_CONFIG, TOWER_DIFFICULTY_TO_TYPE, TOWER_STATS, TOWER_UPGRADE_DIFFICULTIES } from '../config/gameConfig';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 import { hasLineOfSight } from '../map/LineOfSight';
 import type { FlowField } from '../pathfinding/FlowField';
 import { getTowerStats } from '../pathfinding/ThreatMap';
 
-export function createTower(id: number, gridX: number, gridY: number, type: TowerType): TowerState {
-    const tower: TowerState = { id, gridX, gridY, type, level: 1, cooldownMs: 0 };
+export function createTower(id: number, gridX: number, gridY: number, type: TowerType, teamId?: TeamId): TowerState {
+    const tower: TowerState = { id, gridX, gridY, type, level: 1, cooldownMs: 0, teamId };
     if (isWallTower(tower)) {
         tower.health = GAME_CONFIG.wall.health;
         tower.maxHealth = GAME_CONFIG.wall.health;
@@ -86,7 +86,7 @@ export function selectTowerTarget(tower: TowerState, enemies: readonly EnemyStat
     let bestDistance = Number.POSITIVE_INFINITY;
 
     for (const enemy of enemies) {
-        if (enemy.health <= 0) {
+        if (enemy.health <= 0 || (tower.teamId !== undefined && enemy.teamId === tower.teamId)) {
             continue;
         }
         const enemyPosition = { x: enemy.x, y: enemy.y };

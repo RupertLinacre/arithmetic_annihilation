@@ -30,6 +30,18 @@ describe('tower target selection', () => {
         expect(selectTowerTarget(tower, [visible, hidden], grid, GAME_CONFIG.map, flow)?.id).toBe(1);
     });
 
+    it('only targets monsters sent by the opposing multiplayer team', () => {
+        const grid = new Grid(8, 3, 'grass');
+        const flow = buildFlowField(grid, { x: 7, y: 1 }, createEmptyCostGrid(grid));
+        const tower = createTower(1, 2, 1, 'easy', 'solar');
+        const friendly = createEnemy(1, 'grunt', cellCenter({ x: 3, y: 1 }, GAME_CONFIG.map).x, cellCenter({ x: 3, y: 1 }, GAME_CONFIG.map).y, 1, 'solar');
+        const rival = createEnemy(2, 'grunt', cellCenter({ x: 4, y: 1 }, GAME_CONFIG.map).x, cellCenter({ x: 4, y: 1 }, GAME_CONFIG.map).y, 1, 'lunar');
+
+        expect(selectTowerTarget(tower, [friendly, rival], grid, GAME_CONFIG.map, flow)?.id).toBe(rival.id);
+        const result = new TowerSystem().update(0, [tower], [friendly, rival], grid, GAME_CONFIG.map, flow);
+        expect(result.projectiles.every((projectile) => projectile.teamId === 'solar')).toBe(true);
+    });
+
     it('calculates total theoretical tower damage per second from full volleys', () => {
         const easy: TowerState = { id: 1, gridX: 1, gridY: 1, type: 'easy', level: 1, cooldownMs: 0 };
         const spray: TowerState = { id: 2, gridX: 2, gridY: 1, type: 'spray', level: 1, cooldownMs: 0 };

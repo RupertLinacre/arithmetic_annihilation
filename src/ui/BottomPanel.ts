@@ -34,7 +34,8 @@ export interface BottomPanelMobileOptions {
 
 type PendingAction =
     | { kind: 'build'; cell: GridPoint; towerType: TowerType; difficulty: TowerDifficulty }
-    | { kind: 'upgrade'; tower: TowerState; difficulty: TowerDifficulty };
+    | { kind: 'upgrade'; tower: TowerState; difficulty: TowerDifficulty }
+    | { kind: 'custom'; difficulty: TowerDifficulty; onSuccess: () => void };
 
 export class BottomPanel {
     private readonly frame = document.querySelector<HTMLElement>('#game-frame')!;
@@ -51,6 +52,7 @@ export class BottomPanel {
     private selectedBuildTower: BuildTowerSelection = 'easy';
     private panelExpanded = true;
     private readonly mobile: BottomPanelMobileOptions | undefined;
+    private extraSelectorControl?: HTMLElement;
 
     constructor(
         private readonly maths: MathsQuestionSystem,
@@ -107,6 +109,14 @@ export class BottomPanel {
         this.showQuestion({ kind: 'upgrade', tower, difficulty: getUpgradeQuestionDifficulty(tower, nextLevel) });
     }
 
+    openCustomQuestion(difficulty: TowerDifficulty, anchor: Vec2, onSuccess: () => void): void {
+        if (this.correctionRequired) {
+            return;
+        }
+        this.popupAnchor = anchor;
+        this.showQuestion({ kind: 'custom', difficulty, onSuccess });
+    }
+
     close(force = false): void {
         if (this.correctionRequired && !force) {
             return;
@@ -134,6 +144,11 @@ export class BottomPanel {
         return this.currentQuestion?.correctAnswer;
     }
 
+    setExtraSelectorControl(control?: HTMLElement): void {
+        this.extraSelectorControl = control;
+        this.renderDifficultySelector();
+    }
+
     private showQuestion(action: PendingAction): void {
         this.clearPendingClose();
         this.correctionRequired = false;
@@ -157,8 +172,10 @@ export class BottomPanel {
             this.buildMenu.style.pointerEvents = 'none';
             if (this.pendingAction.kind === 'build') {
                 this.callbacks.onBuild(this.pendingAction.cell, this.pendingAction.towerType);
-            } else {
+            } else if (this.pendingAction.kind === 'upgrade') {
                 this.callbacks.onUpgrade(this.pendingAction.tower);
+            } else {
+                this.pendingAction.onSuccess();
             }
             this.clearPendingClose();
             this.closeTimeoutId = window.setTimeout(() => this.close(), 220);
@@ -306,6 +323,9 @@ export class BottomPanel {
             button.addEventListener('click', () => this.setSelectedBuildDifficulty(selection));
             row.append(button);
         });
+        if (this.extraSelectorControl) {
+            row.prepend(this.extraSelectorControl);
+        }
         this.body.append(row);
     }
 

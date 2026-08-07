@@ -1,6 +1,6 @@
 import { GAME_CONFIG } from '../config/gameConfig';
 import { SeededRandom } from '../core/SeededRandom';
-import type { GridPoint } from '../types';
+import type { GridPoint, TeamId } from '../types';
 import { getBaseFootprint } from './BaseFootprint';
 import { cardinalNeighbors, countBuildableCells, Grid, pointKey } from './Grid';
 
@@ -10,6 +10,7 @@ export interface GeneratedMap {
     spawns: GridPoint[];
     seed: number;
     usedFallback: boolean;
+    bases?: Record<TeamId, GridPoint>;
 }
 
 export function hasPathToBase(grid: Grid, start: GridPoint, base: GridPoint): boolean {
@@ -162,4 +163,48 @@ export function generateMap(seed = Date.now()): GeneratedMap {
         }
     }
     return createFallbackMap(seed);
+}
+
+/** A deterministic mirrored map gives each multiplayer side the same amount of
+ * buildable terrain while retaining the original 24 by 14 arena. */
+export function generateMultiplayerMap(seed: number): GeneratedMap {
+    const rng = new SeededRandom(seed);
+    const { cols, rows } = GAME_CONFIG.map;
+    const grid = new Grid(cols, rows, 'grass');
+    const bases: Record<TeamId, GridPoint> = {
+        solar: { x: 1, y: Math.floor(rows / 2) },
+        lunar: { x: cols - 2, y: Math.floor(rows / 2) },
+    };
+    const laneRows = [Math.floor(rows * 0.3), Math.floor(rows / 2), Math.floor(rows * 0.72)];
+    const protectedCells = new Set<string>();
+
+    for (const row of laneRows) {
+        for (let x = 0; x < cols; x += 1) {
+            grid.setTerrain(x, row, 'tarmac');
+            protectedCells.add(`${x},${row}`);
+        }
+    }
+    for (const base of Object.values(bases)) {
+        markProtected(protectedCells, base, 2);
+    }
+
+    for (let y = 0; y < rows; y += 1) {
+        for (let x = 0; x < Math.floor(cols / 2); x += 1) {
+            if (protectedCells.has(`${x},${y}`)) {
+                continue;
+            }
+            const terrain = rng.chance(0.18) ? 'tree' : rng.chance(0.16) ? 'tarmac' : 'grass';
+            grid.setTerrain(x, y, terrain);
+            grid.setTerrain(cols - 1 - x, y, terrain);
+        }
+    }
+
+    return {
+        grid,
+        base: bases.lunar,
+        bases,
+        spawns: [bases.solar, bases.lunar],
+        seed,
+        usedFallback: false,
+    };
 }
