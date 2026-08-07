@@ -10,6 +10,7 @@ import { generateMap, generateMultiplayerMap, type GeneratedMap } from '../map/M
 import { multiplayerSession } from '../multiplayer/MultiplayerSession';
 import {
     chooseMonsterType,
+    getGeneratorDamageScale,
     getGeneratorHealthScale,
     getGeneratorSpawnPeriodMs,
     getGeneratorUpgradeDifficulty,
@@ -35,6 +36,7 @@ import type {
     EnemyState,
     GridPoint,
     MonsterGeneratorState,
+    MonsterGeneratorTrack,
     MonsterGeneratorType,
     MultiplayerCommand,
     MultiplayerSnapshot,
@@ -44,6 +46,7 @@ import type {
     TeamId,
     TerrainType,
     TowerState,
+    TowerDifficulty,
     TowerType,
     Vec2,
 } from '../types';
@@ -195,6 +198,7 @@ interface PendingAirstrike {
 }
 
 const TEAMS: TeamId[] = ['solar', 'lunar'];
+const GENERATOR_TRACKS: MonsterGeneratorTrack[] = ['nibble', 'advanced'];
 const MONSTER_CONFIG: Record<MonsterGeneratorType, {
     label: string;
     enemyType: EnemyState['type'];
@@ -338,7 +342,13 @@ export class GameScene extends Phaser.Scene {
         this.createMapSprites();
         this.spawner = new EnemySpawner(this.generatedMap.spawns, GAME_CONFIG.map, new SeededRandom(`${seed}:spawns`));
         this.multiplayerSpawnRng = new SeededRandom(`${seed}:multiplayer-spawns`);
-        this.generators = TEAMS.map((teamId) => ({ teamId, level: 0, progress: 0, spawnCount: 0 }));
+        this.generators = TEAMS.flatMap((teamId) => GENERATOR_TRACKS.map((track) => ({
+            teamId,
+            track,
+            level: 0,
+            progress: 0,
+            spawnCount: 0,
+        })));
         this.mathsSystem = new MathsQuestionSystem(new SeededRandom(`${seed}:maths`), this.baseDifficulty);
         if (isMobileLayout()) {
             this.mobileLayout = new MobileLayout();
@@ -346,10 +356,10 @@ export class GameScene extends Phaser.Scene {
         this.panel = new BottomPanel(this.mathsSystem, {
             onBuild: (cell, towerType) => this.requestCommand({ kind: 'build', teamId: this.localTeamId, cell, towerType }),
             onUpgrade: (tower) => this.requestCommand({ kind: 'upgrade', teamId: this.localTeamId, towerId: tower.id }),
-            onAnswered: (correct) => this.recordAnswer(correct),
+            onAnswered: (correct, difficulty) => this.recordAnswer(correct, difficulty),
             onQuestionStateChange: (isActive) => this.setQuestionPause(isActive),
             onClose: () => this.clearSelection(),
-        }, this.mobileLayout ? { infoHost: this.mobileLayout.getInfoHost(), answerMode: this.mobileAnswerMode } : undefined);
+        }, this.mobileLayout ? { infoHost: this.mobileLayout.getInfoHost(), answerMode: this.mobileAnswerMode } : undefined, this.isMultiplayer);
         this.setupMusicControls();
         this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handlePointerDown(pointer));
         this.registerDebugKeys();
@@ -636,9 +646,10 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
-    private recordAnswer(correct: boolean): void {
+    private recordAnswer(correct: boolean, difficulty: TowerDifficulty): void {
         if (this.isMultiplayer) {
-            this.requestCommand({ kind: 'answer', teamId: this.localTeamId, correct });
+            const value = difficulty === 'medium' ? 2 : 1;
+            this.requestCommand({ kind: 'answer', teamId: this.localTeamId, correct, value });
         } else {
             this.answered += 1;
             if (correct) {
@@ -679,7 +690,7 @@ export class GameScene extends Phaser.Scene {
             return;
         }
         if (command.kind === 'upgradeGenerator') {
-            const generator = this.generators.find((candidate) => candidate.teamId === command.teamId);
+            const generator = this.generators.find((candidate) => candidate.teamId === command.teamId && candidate.track === command.track);
             if (generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
                 const wasOff = generator.level === 0;
                 generator.level += 1;
@@ -695,9 +706,9 @@ export class GameScene extends Phaser.Scene {
         if (command.correct) {
             stats.correctAnswers += 1;
         } else {
-            const rivalGenerator = this.generators.find((candidate) => candidate.teamId === opponentOf(command.teamId));
+            const rivalGenerator = this.generators.find((candidate) => candidate.teamId === opponentOf(command.teamId) && candidate.track === 'nibble');
             if (rivalGenerator) {
-                rivalGenerator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, rivalGenerator.level + 1);
+                rivalGenerator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, rivalGenerator.level + command.value);
             }
         }
     }
@@ -720,7 +731,7 @@ export class GameScene extends Phaser.Scene {
         if (!multiplayerSession.isComputerOpponent) {
             return;
         }
-        this.scheduleMultiplayerCommand({ kind: 'upgradeGenerator', teamId: 'lunar' });
+        this.scheduleMultiplayerCommand({ kind: 'upgradeGenerator', teamId: 'lunar', track: 'nibble' });
         const firstCell = this.findComputerBuildCell();
         if (firstCell) {
             this.scheduleMultiplayerCommand({ kind: 'build', teamId: 'lunar', cell: firstCell, towerType: 'easy' });
@@ -735,10 +746,13 @@ export class GameScene extends Phaser.Scene {
         this.nextComputerActionTick += COMPUTER_ACTION_INTERVAL_TICKS;
         this.computerActionIndex += 1;
 
-        const generator = this.generators.find((candidate) => candidate.teamId === 'lunar');
-        if (this.computerActionIndex % 3 === 1 && generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
-            this.scheduleMultiplayerCommand({ kind: 'upgradeGenerator', teamId: 'lunar' });
-            return;
+        if (this.computerActionIndex % 3 === 1) {
+            const track: MonsterGeneratorTrack = this.computerActionIndex % 6 === 1 ? 'advanced' : 'nibble';
+            const generator = this.generators.find((candidate) => candidate.teamId === 'lunar' && candidate.track === track);
+            if (generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
+                this.scheduleMultiplayerCommand({ kind: 'upgradeGenerator', teamId: 'lunar', track });
+                return;
+            }
         }
 
         const buildCell = this.findComputerBuildCell();
@@ -915,44 +929,49 @@ export class GameScene extends Phaser.Scene {
             return;
         }
 
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'difficulty-button difficulty-selector-button tower-selector-button monster-generator-button';
-        button.dataset.generatorButton = '';
-        button.setAttribute('aria-label', 'Upgrade monster generator');
-        const icons = document.createElement('span');
-        icons.className = 'monster-generator-icons';
-        for (const type of ['scout', 'grunt', 'tank', 'titan'] as MonsterGeneratorType[]) {
-            const meta = MONSTER_CONFIG[type];
-            const image = document.createElement('img');
-            image.src = meta.sprite;
-            image.alt = meta.label;
-            image.title = meta.label;
-            icons.append(image);
-        }
-        const copy = document.createElement('span');
-        copy.className = 'tower-selector-content monster-generator-copy';
-        const label = document.createElement('strong');
-        label.className = 'tower-selector-label';
-        label.textContent = 'Send monsters';
-        const level = document.createElement('small');
-        level.dataset.generatorLevel = '';
-        copy.append(label, level);
-        const progress = document.createElement('i');
-        progress.className = 'generator-progress';
-        progress.dataset.generatorProgress = '';
-        button.append(icons, copy, progress);
-        button.addEventListener('click', () => {
-            const generator = this.generators.find((candidate) => candidate.teamId === this.localTeamId);
-            if (!generator || generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver) {
-                return;
+        const createGeneratorButton = (track: MonsterGeneratorTrack): HTMLButtonElement => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'difficulty-button difficulty-selector-button tower-selector-button monster-generator-button';
+            button.dataset.generatorButton = '';
+            button.dataset.generatorTrack = track;
+            button.setAttribute('aria-label', track === 'nibble' ? 'Upgrade Nibble spawn rate' : 'Upgrade stronger monster generator');
+            const icons = document.createElement('span');
+            icons.className = 'monster-generator-icons';
+            const iconTypes: MonsterGeneratorType[] = track === 'nibble' ? ['scout'] : ['grunt', 'tank', 'titan'];
+            for (const type of iconTypes) {
+                const meta = MONSTER_CONFIG[type];
+                const image = document.createElement('img');
+                image.src = meta.sprite;
+                image.alt = meta.label;
+                image.title = meta.label;
+                icons.append(image);
             }
-            const rect = button.getBoundingClientRect();
-            this.panel.openCustomQuestion(getGeneratorUpgradeDifficulty(generator.level), { x: rect.left + rect.width / 2, y: rect.top }, () => {
-                this.requestCommand({ kind: 'upgradeGenerator', teamId: this.localTeamId });
+            const copy = document.createElement('span');
+            copy.className = 'tower-selector-content monster-generator-copy';
+            const label = document.createElement('strong');
+            label.className = 'tower-selector-label';
+            label.textContent = track === 'nibble' ? 'Send Nibbles' : 'Send stronger';
+            const level = document.createElement('small');
+            level.dataset.generatorLevel = '';
+            copy.append(label, level);
+            const progress = document.createElement('i');
+            progress.className = 'generator-progress';
+            progress.dataset.generatorProgress = '';
+            button.append(icons, copy, progress);
+            button.addEventListener('click', () => {
+                const generator = this.generators.find((candidate) => candidate.teamId === this.localTeamId && candidate.track === track);
+                if (!generator || generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver) {
+                    return;
+                }
+                const rect = button.getBoundingClientRect();
+                this.panel.openCustomQuestion(getGeneratorUpgradeDifficulty(track), { x: rect.left + rect.width / 2, y: rect.top }, () => {
+                    this.requestCommand({ kind: 'upgradeGenerator', teamId: this.localTeamId, track });
+                });
             });
-        });
-        this.panel.setExtraSelectorControl(button);
+            return button;
+        };
+        this.panel.setExtraSelectorControls(GENERATOR_TRACKS.map(createGeneratorButton));
         this.renderMonsterGeneratorControls();
 
         const removeActionListener = multiplayerSession.onAction((command) => this.scheduleMultiplayerCommand(command));
@@ -978,18 +997,23 @@ export class GameScene extends Phaser.Scene {
         if (!this.isMultiplayer) {
             return;
         }
-        const generator = this.generators.find((candidate) => candidate.teamId === this.localTeamId);
-        const level = document.querySelector<HTMLElement>('[data-generator-level]');
-        const progress = document.querySelector<HTMLElement>('[data-generator-progress]');
-        const button = document.querySelector<HTMLButtonElement>('[data-generator-button]');
-        if (!generator || !level || !progress || !button) {
-            return;
+        for (const track of GENERATOR_TRACKS) {
+            const generator = this.generators.find((candidate) => candidate.teamId === this.localTeamId && candidate.track === track);
+            const button = document.querySelector<HTMLButtonElement>(`[data-generator-track="${track}"]`);
+            const level = button?.querySelector<HTMLElement>('[data-generator-level]');
+            const progress = button?.querySelector<HTMLElement>('[data-generator-progress]');
+            if (!generator || !level || !progress || !button) {
+                continue;
+            }
+            const mix = getMonsterMix(track, generator.level);
+            const unlockLabel = track === 'nibble' ? 'unlock Nibbles' : 'unlock Zappers';
+            level.textContent = generator.level === 0 ? `Off · ${unlockLabel}` : `L${generator.level} · ${mix.description}`;
+            progress.style.transform = `scaleX(${generator.progress})`;
+            button.disabled = generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver;
+            button.title = generator.level === 0
+                ? `Answer a ${track === 'nibble' ? 'base-level' : 'one-level-higher'} question to ${unlockLabel}`
+                : `Level ${generator.level}: ${mix.description}`;
         }
-        const mix = getMonsterMix(generator.level);
-        level.textContent = generator.level === 0 ? 'Off · unlock Nibbles' : `L${generator.level} · ${mix.description}`;
-        progress.style.transform = `scaleX(${generator.progress})`;
-        button.disabled = generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver;
-        button.title = generator.level === 0 ? 'Answer a question to start sending Nibbles' : `Level ${generator.level}: ${mix.description}`;
     }
 
     private updateMonsterGenerators(deltaMs: number): void {
@@ -997,7 +1021,7 @@ export class GameScene extends Phaser.Scene {
             if (generator.level <= 0) {
                 continue;
             }
-            const periodMs = getGeneratorSpawnPeriodMs(generator.level);
+            const periodMs = getGeneratorSpawnPeriodMs(generator.track, generator.level);
             generator.progress += deltaMs / periodMs;
             while (generator.progress >= 1) {
                 generator.progress -= 1;
@@ -1009,7 +1033,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     private spawnMultiplayerEnemy(generator: MonsterGeneratorState): void {
-        const type = chooseMonsterType(generator.level, this.multiplayerSpawnRng);
+        const type = chooseMonsterType(generator.track, generator.level, this.multiplayerSpawnRng);
         const meta = MONSTER_CONFIG[type];
         const base = this.generatedMap.bases![generator.teamId];
         const laneRows = [Math.floor(this.generatedMap.grid.rows * 0.3), Math.floor(this.generatedMap.grid.rows / 2), Math.floor(this.generatedMap.grid.rows * 0.72)];
@@ -1021,10 +1045,11 @@ export class GameScene extends Phaser.Scene {
             meta.enemyType,
             center.x + (this.multiplayerSpawnRng.next() - 0.5) * jitter,
             center.y + (this.multiplayerSpawnRng.next() - 0.5) * jitter,
-            getGeneratorHealthScale(generator.level, type),
+            getGeneratorHealthScale(generator.track, type),
             generator.teamId,
         );
         enemy.visualTier = meta.visualTier;
+        enemy.baseDamage *= getGeneratorDamageScale(generator.track, type);
         this.enemies.push(enemy);
     }
 
@@ -2241,11 +2266,20 @@ export class GameScene extends Phaser.Scene {
             getTowerTypes: () => this.towers.map((tower) => tower.type),
             getEnemyCount: () => this.enemies.length,
             getEnemySnapshot: () => this.enemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y, health: enemy.health })),
-            getGeneratorLevel: () => this.generators.find((generator) => generator.teamId === this.localTeamId)?.level ?? 0,
+            getGeneratorLevel: () => this.generators
+                .filter((generator) => generator.teamId === this.localTeamId)
+                .reduce((total, generator) => total + generator.level, 0),
             getGeneratorLevels: () => ({
-                solar: this.generators.find((generator) => generator.teamId === 'solar')?.level ?? 0,
-                lunar: this.generators.find((generator) => generator.teamId === 'lunar')?.level ?? 0,
+                solar: this.generators.filter((generator) => generator.teamId === 'solar').reduce((total, generator) => total + generator.level, 0),
+                lunar: this.generators.filter((generator) => generator.teamId === 'lunar').reduce((total, generator) => total + generator.level, 0),
             }),
+            getGeneratorLevelsByTrack: () => Object.fromEntries(TEAMS.map((teamId) => [
+                teamId,
+                Object.fromEntries(GENERATOR_TRACKS.map((track) => [
+                    track,
+                    this.generators.find((generator) => generator.teamId === teamId && generator.track === track)?.level ?? 0,
+                ])),
+            ])),
             getMultiplayerResyncCount: () => this.multiplayerResyncCount,
             isComputerOpponent: () => multiplayerSession.isComputerOpponent,
             getTerrainTextureKeys: () => this.terrainSprites.map((sprite) => sprite.texture.key),
@@ -2259,6 +2293,7 @@ export class GameScene extends Phaser.Scene {
             getElapsedMs: () => this.elapsedMs,
             isPaused: () => this.isPaused,
             getCurrentQuestionAnswer: () => this.panel.getCurrentQuestionAnswer(),
+            getCurrentQuestionYearLevel: () => this.panel.getCurrentQuestionYearLevel(),
             getSpawnRate: () => this.spawnRate,
             setSpawnRate: (spawnRate: GameDifficulty) => this.setSpawnRate(spawnRate),
             getBaseDifficulty: () => this.baseDifficulty,

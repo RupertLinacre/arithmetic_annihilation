@@ -4,6 +4,8 @@ export type TeamId = 'solar' | 'lunar';
 
 export type MonsterGeneratorType = 'scout' | 'grunt' | 'tank' | 'titan';
 
+export type MonsterGeneratorTrack = 'nibble' | 'advanced';
+
 export type TowerDifficulty = 'easy' | 'medium' | 'hard' | 'veryHard';
 
 export type TowerType = 'easy' | 'spray' | 'missile' | 'flamethrower' | 'cluster' | 'wall' | 'airstrike';
@@ -107,6 +109,7 @@ export interface MathsQuestion {
 
 export interface MonsterGeneratorState {
     teamId: TeamId;
+    track: MonsterGeneratorTrack;
     level: number;
     progress: number;
     spawnCount: number;
@@ -153,8 +156,8 @@ export interface MultiplayerSnapshot {
 export type MultiplayerCommand =
     | { kind: 'build'; teamId: TeamId; cell: GridPoint; towerType: TowerType }
     | { kind: 'upgrade'; teamId: TeamId; towerId: number }
-    | { kind: 'upgradeGenerator'; teamId: TeamId }
-    | { kind: 'answer'; teamId: TeamId; correct: boolean };
+    | { kind: 'upgradeGenerator'; teamId: TeamId; track: MonsterGeneratorTrack }
+    | { kind: 'answer'; teamId: TeamId; correct: boolean; value: 1 | 2 };
 
 export interface ScheduledMultiplayerCommand {
     id: string;

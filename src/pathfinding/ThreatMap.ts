@@ -2,6 +2,7 @@ import { GAME_CONFIG, TOWER_STATS } from '../config/gameConfig';
 import type { MapGeometry, TowerState } from '../types';
 import { cellCenter, Grid } from '../map/Grid';
 import { hasLineOfSight } from '../map/LineOfSight';
+import { isMultiplayerTower, MULTIPLAYER_TOWER_STATS } from '../multiplayer/BalanceConfig';
 
 export type CostGrid = number[][];
 
@@ -9,8 +10,9 @@ export function createEmptyCostGrid(grid: Grid, value = 0): CostGrid {
     return Array.from({ length: grid.rows }, () => Array.from({ length: grid.cols }, () => value));
 }
 
-export function getTowerStats(tower: Pick<TowerState, 'type' | 'level'>) {
-    return TOWER_STATS[tower.type][Math.max(1, Math.min(TOWER_STATS[tower.type].length, tower.level)) - 1];
+export function getTowerStats(tower: Pick<TowerState, 'type' | 'level'> & Partial<Pick<TowerState, 'teamId'>>) {
+    const stats = isMultiplayerTower(tower) ? MULTIPLAYER_TOWER_STATS : TOWER_STATS;
+    return stats[tower.type][Math.max(1, Math.min(stats[tower.type].length, tower.level)) - 1];
 }
 
 export function calculateTowerThreatCosts(grid: Grid, towers: readonly TowerState[], geometry: MapGeometry): CostGrid {

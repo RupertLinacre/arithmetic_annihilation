@@ -20,6 +20,7 @@ declare global {
             getEnemySnapshot: () => { id: number; x: number; y: number; health: number }[];
             getGeneratorLevel: () => number;
             getGeneratorLevels: () => { solar: number; lunar: number };
+            getGeneratorLevelsByTrack: () => Record<'solar' | 'lunar', Record<'nibble' | 'advanced', number>>;
             getMultiplayerResyncCount: () => number;
             isComputerOpponent: () => boolean;
             getTerrainTextureKeys: () => string[];
@@ -30,6 +31,7 @@ declare global {
             getElapsedMs: () => number;
             isPaused: () => boolean;
             getCurrentQuestionAnswer: () => string | undefined;
+            getCurrentQuestionYearLevel: () => string | undefined;
             getSpawnRate: () => string;
             setSpawnRate: (spawnRate: 'veryEasy' | 'easy' | 'medium' | 'hard' | 'veryHard') => void;
             getBaseDifficulty: () => string;
@@ -427,8 +429,10 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await host.locator('[data-start-match]').click();
     await expect(host.locator('canvas')).toBeVisible({ timeout: 20_000 });
     await expect(guest.locator('canvas')).toBeVisible({ timeout: 20_000 });
-    await expect(host.locator('[data-generator-button]')).toBeVisible();
-    await expect(guest.locator('[data-generator-button]')).toBeVisible();
+    await expect(host.locator('[data-generator-button]')).toHaveCount(2);
+    await expect(guest.locator('[data-generator-button]')).toHaveCount(2);
+    await expect(host.locator('[data-generator-track="nibble"]')).toBeVisible();
+    await expect(host.locator('[data-generator-track="advanced"]')).toBeVisible();
     await expect(host.locator('.difficulty-selector-row > button').first()).toHaveAttribute('data-generator-button', '');
     await expect(host.getByTestId('select-wall')).toBeVisible();
     await expect(host.getByTestId('select-airstrike')).toBeVisible();
@@ -456,12 +460,20 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(2);
 
     const enemyCountBefore = await host.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount());
-    await host.locator('[data-generator-button]').click();
+    await host.locator('[data-generator-track="nibble"]').click();
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionYearLevel())).toBe('year3');
     const generatorAnswer = await host.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
     await host.getByTestId('answer-input').fill(generatorAnswer!);
     await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevel()), { timeout: 20_000 }).toBe(1);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevelsByTrack().solar.nibble), { timeout: 20_000 }).toBe(1);
     await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount()), { timeout: 20_000 }).toBeGreaterThan(enemyCountBefore);
     await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount()), { timeout: 20_000 }).toBeGreaterThan(enemyCountBefore);
+
+    await host.locator('[data-generator-track="advanced"]').click();
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionYearLevel())).toBe('year4');
+    const advancedGeneratorAnswer = await host.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await host.getByTestId('answer-input').fill(advancedGeneratorAnswer!);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevelsByTrack().solar.advanced), { timeout: 20_000 }).toBe(1);
     await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs()), { timeout: 5_000 }).toBeGreaterThan(2_200);
     expect(await guest.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerResyncCount())).toBe(0);
     expect(errors).toEqual([]);

@@ -1,8 +1,9 @@
 import { DIFFICULTY_LABELS, TOWER_BUILD_DIFFICULTIES, TOWER_LABELS } from '../config/gameConfig';
-import { canUpgradeTower, getUpgradeQuestionDifficulty } from '../entities/Tower';
+import { canUpgradeTower, getMultiplayerUpgradeQuestionDifficulty, getUpgradeQuestionDifficulty } from '../entities/Tower';
 import { getTowerStats } from '../pathfinding/ThreatMap';
 import { MathsQuestionSystem } from '../systems/MathsQuestionSystem';
 import type { GridPoint, MathsQuestion, TowerDifficulty, TowerState, TowerType, Vec2 } from '../types';
+import { getMultiplayerTowerQuestionDifficulty } from '../multiplayer/BalanceConfig';
 
 const BUILD_TOWER_TYPES: TowerType[] = ['easy', 'spray', 'missile', 'flamethrower', 'cluster', 'wall', 'airstrike'];
 const spritePath = (path: string): string => `${import.meta.env.BASE_URL}${path}`;
@@ -43,7 +44,7 @@ export type BuildTowerSelection = TowerType;
 interface BottomPanelCallbacks {
     onBuild: (cell: GridPoint, towerType: TowerType) => void;
     onUpgrade: (tower: TowerState) => void;
-    onAnswered: (correct: boolean) => void;
+    onAnswered: (correct: boolean, difficulty: TowerDifficulty) => void;
     onQuestionStateChange: (isActive: boolean) => void;
     onClose: () => void;
 }
@@ -74,12 +75,13 @@ export class BottomPanel {
     private panelExpanded = true;
     private readonly mobile: BottomPanelMobileOptions | undefined;
     private mobileAnswerMode: MobileAnswerMode;
-    private extraSelectorControl?: HTMLElement;
+    private extraSelectorControls: HTMLElement[] = [];
 
     constructor(
         private readonly maths: MathsQuestionSystem,
         private readonly callbacks: BottomPanelCallbacks,
         mobile?: BottomPanelMobileOptions,
+        private readonly multiplayer = false,
     ) {
         this.mobile = mobile;
         this.mobileAnswerMode = mobile?.answerMode ?? 'multiple-choice';
@@ -104,7 +106,10 @@ export class BottomPanel {
         this.clearPendingClose();
         this.popupAnchor = anchor;
         const towerType = this.resolveBuildTower();
-        this.showQuestion({ kind: 'build', cell, towerType, difficulty: TOWER_BUILD_DIFFICULTIES[towerType] });
+        const difficulty = this.multiplayer
+            ? getMultiplayerTowerQuestionDifficulty(towerType)
+            : TOWER_BUILD_DIFFICULTIES[towerType];
+        this.showQuestion({ kind: 'build', cell, towerType, difficulty });
     }
 
     openUpgrade(tower: TowerState, anchor: Vec2): void {
@@ -129,7 +134,10 @@ export class BottomPanel {
         }
 
         const nextLevel = tower.level + 1;
-        this.showQuestion({ kind: 'upgrade', tower, difficulty: getUpgradeQuestionDifficulty(tower, nextLevel) });
+        const difficulty = this.multiplayer
+            ? getMultiplayerUpgradeQuestionDifficulty(tower)
+            : getUpgradeQuestionDifficulty(tower, nextLevel);
+        this.showQuestion({ kind: 'upgrade', tower, difficulty });
     }
 
     openCustomQuestion(difficulty: TowerDifficulty, anchor: Vec2, onSuccess: () => void): void {
@@ -167,13 +175,17 @@ export class BottomPanel {
         return this.currentQuestion?.correctAnswer;
     }
 
+    getCurrentQuestionYearLevel(): string | undefined {
+        return this.currentQuestion?.yearLevel;
+    }
+
     setMobileAnswerMode(answerMode: MobileAnswerMode): void {
         this.mobileAnswerMode = answerMode;
         this.close(true);
     }
 
-    setExtraSelectorControl(control?: HTMLElement): void {
-        this.extraSelectorControl = control;
+    setExtraSelectorControls(controls: HTMLElement[] = []): void {
+        this.extraSelectorControls = controls;
         this.renderDifficultySelector();
     }
 
@@ -193,7 +205,7 @@ export class BottomPanel {
         }
 
         const correct = this.isCorrectAnswer(answer);
-        this.callbacks.onAnswered(correct);
+        this.callbacks.onAnswered(correct, this.currentQuestion.difficulty);
         if (correct) {
             this.setQuestionActive(false);
             this.buildMenu.append(this.createParagraph('feedback good', 'Correct'));
@@ -334,8 +346,8 @@ export class BottomPanel {
             button.addEventListener('click', () => this.setSelectedBuildDifficulty(selection));
             row.append(button);
         });
-        if (this.extraSelectorControl) {
-            row.prepend(this.extraSelectorControl);
+        if (this.extraSelectorControls.length > 0) {
+            row.prepend(...this.extraSelectorControls);
         }
         this.body.append(row);
     }
