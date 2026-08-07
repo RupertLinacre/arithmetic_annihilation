@@ -74,6 +74,13 @@ async function clickWorldPoint(page: Page, worldX: number, worldY: number): Prom
     await page.mouse.click(box.x + point.x * (box.width / size.width), box.y + point.y * (box.height / size.height));
 }
 
+async function enterNumberPadAnswer(page: Page, answer: string): Promise<void> {
+    for (const character of answer) {
+        const key = character === ',' ? '.' : character;
+        await page.locator(`[data-testid="answer-number-key"][data-key="${key}"]`).click();
+    }
+}
+
 test('arithmetic tower defence MVP is playable in the browser', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', (message) => {
@@ -190,18 +197,21 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await answerInput.press('Enter');
     await expect(page.getByTestId('build-popup')).toContainText(definitionText ?? '');
     await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
-    await expect(page.getByTestId('answer-review-delay')).toHaveText('Game resumes in 5 seconds.');
+    await expect(page.getByTestId('build-popup')).toContainText('Tap the correct answer to continue.');
     await expect(page.getByTestId('answer-review-close')).toHaveCount(0);
     await expect(page.getByTestId('answer-review-input')).toHaveCount(0);
+    await expect(page.getByTestId('answer-number-pad')).toBeVisible();
     await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
     await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
+    const wrongDigit = correctAnswer === '9' ? '8' : '9';
+    await page.locator(`[data-testid="answer-number-key"][data-key="${wrongDigit}"]`).click();
+    await expect(page.getByTestId('answer-number-pad-display')).toHaveText(wrongDigit);
+    await page.locator('[data-testid="answer-number-key"][data-key="backspace"]').click();
+    await expect(page.getByTestId('answer-number-pad-display')).toHaveText('—');
     const reviewPausedElapsedMs = await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());
     await page.waitForTimeout(150);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs())).toBe(reviewPausedElapsedMs);
-    await expect(page.getByTestId('build-popup')).toBeHidden({ timeout: 6500 });
-    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(false);
-
-    await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
+    await enterNumberPadAnswer(page, correctAnswer!);
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
     await expect(page.getByTestId('answer-input')).toBeVisible();
     const nextCorrectAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
@@ -254,7 +264,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     expect(errors).toEqual([]);
 });
 
-test('mobile answer flow keeps choices and pauses after a wrong tap', async ({ page }) => {
+test('mobile answer flow keeps choices and uses an in-game correction number pad', async ({ page }) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await page.addInitScript(() => {
         Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: () => 1 });
@@ -322,10 +332,11 @@ test('mobile answer flow keeps choices and pauses after a wrong tap', async ({ p
     expect(correctAnswer).toBeTruthy();
     await page.locator('[data-testid="answer-button"][data-correct="false"]').first().click();
     await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
-    await expect(page.getByTestId('answer-review-delay')).toHaveText('Game resumes in 5 seconds.');
+    await expect(page.getByTestId('answer-number-pad')).toBeVisible();
     await expect(page.getByTestId('answer-review-input')).toHaveCount(0);
-    await expect(page.getByTestId('build-popup')).toBeHidden({ timeout: 6500 });
-    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(false);
+    expect(await page.evaluate(() => document.activeElement instanceof HTMLInputElement)).toBe(false);
+    await enterNumberPadAnswer(page, correctAnswer!);
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
     await expect(page.getByTestId('answer-input')).toHaveCount(0);
 });
 

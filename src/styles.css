@@ -347,6 +347,54 @@ body {
   background: rgba(247, 240, 214, 0.12);
 }
 
+.answer-number-pad {
+  display: grid;
+  gap: 6px;
+}
+
+.answer-number-pad-display {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 34px;
+  padding: 4px 10px;
+  overflow: hidden;
+  border: 1px solid rgba(243, 182, 75, 0.42);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(247, 240, 214, 0.08);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.answer-number-pad-display.is-empty {
+  color: rgba(247, 240, 214, 0.42);
+}
+
+.answer-number-pad-keys {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.answer-number-key {
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 2px;
+  border-color: rgba(243, 182, 75, 0.3);
+  border-radius: 7px;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  touch-action: manipulation;
+}
+
+.answer-number-key-backspace {
+  color: var(--amber);
+}
+
   overflow-x: hidden;
   overflow-y: auto;
   color: var(--ink);

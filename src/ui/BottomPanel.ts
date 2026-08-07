@@ -17,7 +17,8 @@ const TOWER_SELECTOR_OPTIONS: Record<TowerType, { imagePath?: string; markerClas
 };
 const BUILD_MENU_PADDING = 12;
 const BUILD_MENU_OFFSET = 14;
-const INCORRECT_ANSWER_DELAY_MS = 5000;
+const NUMBER_PAD_KEYS = ['1', '2', '3', '4', '5', 'backspace', '6', '7', '8', '9', '0', '.'] as const;
+const MAX_NUMBER_PAD_LENGTH = 16;
 
 export type BuildTowerSelection = TowerType;
 
@@ -183,7 +184,8 @@ export class BottomPanel {
             return;
         }
 
-        this.showIncorrectAnswerPopup();
+        const action = this.pendingAction;
+        this.showIncorrectAnswerPopup(action);
     }
 
     private hideBuildMenu(): void {
@@ -230,7 +232,7 @@ export class BottomPanel {
         }
     }
 
-    private showIncorrectAnswerPopup(): void {
+    private showIncorrectAnswerPopup(action: PendingAction): void {
         if (!this.currentQuestion || !this.popupAnchor) {
             return;
         }
@@ -246,14 +248,14 @@ export class BottomPanel {
 
         const questionText = this.createQuestionText(question);
         const feedback = this.createParagraph('feedback answer-review-answer', `Incorrect — correct answer: ${question.correctAnswer}`);
-        const instruction = this.createParagraph('meta-line answer-review-prompt', 'Game resumes in 5 seconds.');
-        instruction.dataset.testid = 'answer-review-delay';
+        const instruction = this.createParagraph('meta-line answer-review-prompt', 'Tap the correct answer to continue.');
+        const numberPad = this.createCorrectionNumberPad(action);
 
-        this.buildMenu.append(header, questionText, feedback, instruction);
+        this.buildMenu.append(header, questionText, feedback, instruction, numberPad);
         this.buildMenu.hidden = false;
+        this.buildMenu.classList.add('is-answer-popup');
         this.buildMenu.classList.add('is-open');
         this.positionBuildMenu(this.popupAnchor);
-        this.closeTimeoutId = window.setTimeout(() => this.close(true), INCORRECT_ANSWER_DELAY_MS);
     }
 
     private showMessagePopup(kicker: string, titleText: string, detail: string, message: string): void {
@@ -377,6 +379,62 @@ export class BottomPanel {
             }
         });
         return answerInput;
+    }
+
+    private createCorrectionNumberPad(action: PendingAction): HTMLDivElement {
+        const numberPad = this.createDiv('answer-number-pad');
+        numberPad.dataset.testid = 'answer-number-pad';
+
+        const display = this.createDiv('answer-number-pad-display is-empty');
+        display.dataset.testid = 'answer-number-pad-display';
+        display.setAttribute('role', 'textbox');
+        display.setAttribute('aria-label', 'Entered answer');
+        display.setAttribute('aria-readonly', 'true');
+        display.setAttribute('aria-live', 'polite');
+        display.textContent = '—';
+
+        const keys = this.createDiv('answer-number-pad-keys');
+        let value = '';
+        const updateValue = (nextValue: string): void => {
+            value = nextValue;
+            display.textContent = value || '—';
+            display.classList.toggle('is-empty', value.length === 0);
+            if (value && this.isCorrectAnswer(value)) {
+                this.showQuestion(action);
+            }
+        };
+
+        NUMBER_PAD_KEYS.forEach((key) => {
+            const isBackspace = key === 'backspace';
+            const button = this.createButton(
+                `answer-number-key${isBackspace ? ' answer-number-key-backspace' : ''}`,
+                isBackspace ? '⌫' : key,
+                'answer-number-key',
+            );
+            button.dataset.key = key;
+            button.setAttribute('aria-label', isBackspace ? 'Delete last digit' : key === '.' ? 'Decimal point' : `Digit ${key}`);
+            button.addEventListener('click', () => {
+                if (isBackspace) {
+                    updateValue(value.slice(0, -1));
+                    return;
+                }
+                if (key === '.' && value.includes('.')) {
+                    return;
+                }
+                if (value.length >= MAX_NUMBER_PAD_LENGTH) {
+                    return;
+                }
+                if (key === '.') {
+                    updateValue(value ? `${value}.` : '0.');
+                    return;
+                }
+                updateValue(value === '0' ? key : `${value}${key}`);
+            });
+            keys.append(button);
+        });
+
+        numberPad.append(display, keys);
+        return numberPad;
     }
 
     private positionBuildMenu(anchor: Vec2): void {
