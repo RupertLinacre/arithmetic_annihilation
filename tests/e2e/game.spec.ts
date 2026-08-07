@@ -34,6 +34,8 @@ declare global {
             setSpawnRate: (spawnRate: 'veryEasy' | 'easy' | 'medium' | 'hard' | 'veryHard') => void;
             getBaseDifficulty: () => string;
             setBaseDifficulty: (difficulty: string) => void;
+            getMobileAnswerMode: () => string;
+            setMobileAnswerMode: (answerMode: 'multiple-choice' | 'type-answer') => void;
             getMusicMuted: () => boolean;
             setMusicMuted: (muted: boolean) => void;
             getMusicVolume: () => number;
@@ -98,6 +100,8 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getBaseDifficulty())).toBe('year3');
     await expect.poll(() => new URL(page.url()).searchParams.get('base-difficulty')).toBe('year3');
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMobileAnswerMode())).toBe('multiple-choice');
+    await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('multiple-choice');
     await expect(page.getByTestId('music-mute-button')).toBeVisible();
     await expect(page.getByTestId('music-volume-slider')).toBeVisible();
 
@@ -141,6 +145,12 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect.poll(() => new URL(page.url()).searchParams.get('base-difficulty')).toBe('year6');
 
     await openSettings();
+    await expect(page.getByTestId('answer-mode-select')).toHaveValue('multiple-choice');
+    await page.getByTestId('answer-mode-select').selectOption('type-answer');
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMobileAnswerMode())).toBe('type-answer');
+    await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('type-answer');
+    await page.getByTestId('answer-mode-select').selectOption('multiple-choice');
+    await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('multiple-choice');
     await page.getByTestId('settings-button').click();
     await expect(page.getByTestId('settings-popup')).toBeHidden();
 
@@ -287,7 +297,7 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
         };
     });
 
-    await page.goto('/?seed=e2e-mobile');
+    await page.goto('/?seed=e2e-mobile&answer-mode=multiple-choice');
     await expect(page.locator('html')).toHaveClass(/is-mobile/);
     const splashSize = await page.getByTestId('mode-screen').evaluate((element) => ({
         clientHeight: element.clientHeight,
@@ -338,6 +348,22 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
     await enterNumberPadAnswer(page, correctAnswer!);
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
     await expect(page.getByTestId('answer-input')).toHaveCount(0);
+
+    await page.getByTestId('answer-popup-close').click();
+    await page.getByTestId('settings-button').click();
+    await expect(page.getByTestId('settings-popup')).toBeVisible();
+    await page.getByTestId('answer-mode-select').selectOption('type-answer');
+    await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('type-answer');
+    await page.getByTestId('settings-button').click();
+    expect(await page.evaluate(() => window.arithmeticAnnihilation!.openFirstBuildQuestion())).toBe(true);
+    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
+    await expect(page.getByTestId('answer-number-pad')).toBeVisible();
+    await expect(page.getByTestId('answer-review-input')).toHaveCount(0);
+    const typedAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    expect(typedAnswer).toBeTruthy();
+    await enterNumberPadAnswer(page, typedAnswer!);
+    await page.locator('[data-testid="answer-number-key"][data-key="submit"]').click();
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
 });
 
 test('versus computer starts a local multiplayer battle with opponent visuals', async ({ page }) => {

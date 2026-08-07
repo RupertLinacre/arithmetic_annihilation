@@ -17,8 +17,26 @@ const TOWER_SELECTOR_OPTIONS: Record<TowerType, { imagePath?: string; markerClas
 };
 const BUILD_MENU_PADDING = 12;
 const BUILD_MENU_OFFSET = 14;
-const NUMBER_PAD_KEYS = ['1', '2', '3', '4', '5', 'backspace', '6', '7', '8', '9', '0', '.'] as const;
+const NUMBER_PAD_DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'] as const;
 const MAX_NUMBER_PAD_LENGTH = 16;
+
+export type MobileAnswerMode = 'multiple-choice' | 'type-answer';
+type NumberPadControlKey = 'backspace' | 'submit';
+type NumberPadKey = string | NumberPadControlKey;
+
+export function getAnswerNumberPadKeys(answer: string, includeSubmit: boolean): NumberPadKey[] {
+    const specialKeys = [...new Set([...answer].filter((character) => !/[0-9\s]/.test(character)))];
+    const keys: NumberPadKey[] = [
+        ...NUMBER_PAD_DIGITS.slice(0, 5),
+        'backspace',
+        ...NUMBER_PAD_DIGITS.slice(5),
+        ...specialKeys,
+    ];
+    if (includeSubmit) {
+        keys.push('submit');
+    }
+    return keys;
+}
 
 export type BuildTowerSelection = TowerType;
 
@@ -32,6 +50,7 @@ interface BottomPanelCallbacks {
 
 export interface BottomPanelMobileOptions {
     infoHost: HTMLElement;
+    answerMode: MobileAnswerMode;
 }
 
 type PendingAction =
@@ -54,6 +73,7 @@ export class BottomPanel {
     private selectedBuildTower: BuildTowerSelection = 'easy';
     private panelExpanded = true;
     private readonly mobile: BottomPanelMobileOptions | undefined;
+    private mobileAnswerMode: MobileAnswerMode;
     private extraSelectorControl?: HTMLElement;
 
     constructor(
@@ -62,6 +82,7 @@ export class BottomPanel {
         mobile?: BottomPanelMobileOptions,
     ) {
         this.mobile = mobile;
+        this.mobileAnswerMode = mobile?.answerMode ?? 'multiple-choice';
         this.buildMenu = document.createElement('section');
         this.buildMenu.className = 'build-popup';
         this.buildMenu.dataset.testid = 'build-popup';
@@ -146,6 +167,11 @@ export class BottomPanel {
         return this.currentQuestion?.correctAnswer;
     }
 
+    setMobileAnswerMode(answerMode: MobileAnswerMode): void {
+        this.mobileAnswerMode = answerMode;
+        this.close(true);
+    }
+
     setExtraSelectorControl(control?: HTMLElement): void {
         this.extraSelectorControl = control;
         this.renderDifficultySelector();
@@ -219,7 +245,9 @@ export class BottomPanel {
 
         const questionText = this.createQuestionText(this.currentQuestion);
         const answerControl = this.mobile
-            ? this.createChoiceButtons(this.currentQuestion)
+            ? this.mobileAnswerMode === 'multiple-choice'
+                ? this.createChoiceButtons(this.currentQuestion)
+                : this.createAnswerNumberPad(this.currentQuestion, (answer) => this.answer(answer), true)
             : this.createAnswerInput(this.currentQuestion, 'answer-input');
 
         this.buildMenu.append(header, questionText, answerControl);
@@ -249,7 +277,7 @@ export class BottomPanel {
         const questionText = this.createQuestionText(question);
         const feedback = this.createParagraph('feedback answer-review-answer', `Incorrect — correct answer: ${question.correctAnswer}`);
         const instruction = this.createParagraph('meta-line answer-review-prompt', 'Tap the correct answer to continue.');
-        const numberPad = this.createCorrectionNumberPad(action);
+        const numberPad = this.createAnswerNumberPad(question, () => this.showQuestion(action), false);
 
         this.buildMenu.append(header, questionText, feedback, instruction, numberPad);
         this.buildMenu.hidden = false;
@@ -381,7 +409,11 @@ export class BottomPanel {
         return answerInput;
     }
 
-    private createCorrectionNumberPad(action: PendingAction): HTMLDivElement {
+    private createAnswerNumberPad(
+        question: MathsQuestion,
+        onSubmit: (answer: string) => void,
+        requireSubmit: boolean,
+    ): HTMLDivElement {
         const numberPad = this.createDiv('answer-number-pad');
         numberPad.dataset.testid = 'answer-number-pad';
 
@@ -399,36 +431,57 @@ export class BottomPanel {
             value = nextValue;
             display.textContent = value || '—';
             display.classList.toggle('is-empty', value.length === 0);
-            if (value && this.isCorrectAnswer(value)) {
-                this.showQuestion(action);
+            if (!requireSubmit && value && this.isCorrectAnswer(value)) {
+                onSubmit(value);
             }
         };
 
-        NUMBER_PAD_KEYS.forEach((key) => {
+        const numberPadKeys = getAnswerNumberPadKeys(question.correctAnswer, requireSubmit);
+        const columnCount = Math.min(7, Math.max(6, Math.ceil(numberPadKeys.length / 2)));
+        keys.style.setProperty('--answer-key-columns', String(columnCount));
+        numberPadKeys.forEach((key) => {
             const isBackspace = key === 'backspace';
+            const isSubmit = key === 'submit';
             const button = this.createButton(
-                `answer-number-key${isBackspace ? ' answer-number-key-backspace' : ''}`,
-                isBackspace ? '⌫' : key,
+                `answer-number-key${isBackspace ? ' answer-number-key-backspace' : ''}${isSubmit ? ' answer-number-key-submit' : ''}`,
+                isBackspace ? '⌫' : isSubmit ? '✓' : key,
                 'answer-number-key',
             );
             button.dataset.key = key;
-            button.setAttribute('aria-label', isBackspace ? 'Delete last digit' : key === '.' ? 'Decimal point' : `Digit ${key}`);
+            button.setAttribute(
+                'aria-label',
+                isBackspace
+                    ? 'Delete last character'
+                    : isSubmit
+                        ? 'Check answer'
+                        : key === '.'
+                            ? 'Decimal point'
+                            : key === '/'
+                                ? 'Fraction slash'
+                                : /^[0-9]$/.test(key) ? `Digit ${key}` : key,
+            );
             button.addEventListener('click', () => {
                 if (isBackspace) {
                     updateValue(value.slice(0, -1));
                     return;
                 }
-                if (key === '.' && value.includes('.')) {
+                if (isSubmit) {
+                    if (value) {
+                        onSubmit(value);
+                    }
+                    return;
+                }
+                if (!/^[0-9]$/.test(key) && value.includes(key)) {
                     return;
                 }
                 if (value.length >= MAX_NUMBER_PAD_LENGTH) {
                     return;
                 }
-                if (key === '.') {
+                if (key === '.' && !value) {
                     updateValue(value ? `${value}.` : '0.');
                     return;
                 }
-                updateValue(value === '0' ? key : `${value}${key}`);
+                updateValue(value === '0' && /^[0-9]$/.test(key) ? key : `${value}${key}`);
             });
             keys.append(button);
         });

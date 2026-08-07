@@ -29,7 +29,7 @@ import {
     type BaseMathsDifficulty,
     MathsQuestionSystem,
 } from '../systems/MathsQuestionSystem';
-import { BottomPanel, type BuildTowerSelection } from '../ui/BottomPanel';
+import { BottomPanel, type BuildTowerSelection, type MobileAnswerMode } from '../ui/BottomPanel';
 import { isMobileLayout, MobileLayout } from '../ui/mobile';
 import type {
     EnemyState,
@@ -129,11 +129,13 @@ const COMPUTER_TOWER_TYPES: TowerType[] = ['easy', 'spray', 'missile', 'flamethr
 const LEGACY_DIFFICULTY_STORAGE_KEY = 'vocab-annihilation:difficulty';
 const SPAWN_RATE_STORAGE_KEY = 'arithmetic-annihilation:spawn-rate';
 const BASE_DIFFICULTY_STORAGE_KEY = 'arithmetic-annihilation:base-difficulty';
+const ANSWER_MODE_STORAGE_KEY = 'arithmetic-annihilation:answer-mode';
 const MUSIC_VOLUME_STORAGE_KEY = 'arithmetic-annihilation:music-volume';
 const MUSIC_MUTED_STORAGE_KEY = 'arithmetic-annihilation:music-muted';
 const URL_OPTION_KEYS = {
     spawnRate: 'spawn-rate',
     baseDifficulty: 'base-difficulty',
+    answerMode: 'answer-mode',
     musicVolume: 'music-volume',
     musicMuted: 'music-muted',
 } as const;
@@ -146,8 +148,17 @@ const SPAWN_RATE_LABELS: Record<GameDifficulty, string> = {
     veryHard: 'Very high',
 };
 
+const ANSWER_MODE_LABELS: Record<MobileAnswerMode, string> = {
+    'multiple-choice': 'multiple choice',
+    'type-answer': 'type the answer',
+};
+
 function isBaseMathsDifficulty(value: string): value is BaseMathsDifficulty {
     return normalizeBaseMathsDifficulty(value) === value;
+}
+
+function isMobileAnswerMode(value: string): value is MobileAnswerMode {
+    return value === 'multiple-choice' || value === 'type-answer';
 }
 
 type EnemyTextureTier = keyof typeof ENEMY_TEXTURES;
@@ -272,6 +283,7 @@ export class GameScene extends Phaser.Scene {
     private baseDamageFlashMs = 0;
     private spawnRate: GameDifficulty = 'medium';
     private baseDifficulty: BaseMathsDifficulty = 'year3';
+    private mobileAnswerMode: MobileAnswerMode = 'multiple-choice';
     private elapsedMs = 0;
     private kills = 0;
     private answered = 0;
@@ -313,6 +325,7 @@ export class GameScene extends Phaser.Scene {
             : seedParam ? SeededRandom.hash(seedParam) : Date.now() % 1000000000;
         this.spawnRate = this.readSavedSpawnRate();
         this.baseDifficulty = this.readSavedBaseDifficulty();
+        this.mobileAnswerMode = this.readSavedMobileAnswerMode();
         this.musicVolume = this.readSavedMusicVolume();
         this.musicMuted = this.readSavedMusicMuted();
         this.syncUrlOptions();
@@ -336,7 +349,7 @@ export class GameScene extends Phaser.Scene {
             onAnswered: (correct) => this.recordAnswer(correct),
             onQuestionStateChange: (isActive) => this.setQuestionPause(isActive),
             onClose: () => this.clearSelection(),
-        }, this.mobileLayout ? { infoHost: this.mobileLayout.getInfoHost() } : undefined);
+        }, this.mobileLayout ? { infoHost: this.mobileLayout.getInfoHost(), answerMode: this.mobileAnswerMode } : undefined);
         this.setupMusicControls();
         this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handlePointerDown(pointer));
         this.registerDebugKeys();
@@ -1210,6 +1223,7 @@ export class GameScene extends Phaser.Scene {
         const popup = document.querySelector<HTMLElement>('[data-testid="settings-popup"]')!;
         const spawnRateSelect = document.querySelector<HTMLSelectElement>('[data-testid="spawn-rate-select"]')!;
         const baseDifficultySelect = document.querySelector<HTMLSelectElement>('[data-testid="base-difficulty-select"]')!;
+        const answerModeSelect = document.querySelector<HTMLSelectElement>('[data-testid="answer-mode-select"]')!;
         this.mobileLayout?.attachSettingsPopup(popup);
         const setPopupOpen = (open: boolean) => {
             if (this.mobileLayout) {
@@ -1249,6 +1263,12 @@ export class GameScene extends Phaser.Scene {
                 if (!this.isMultiplayer) {
                     restartGame();
                 }
+            }
+        });
+        answerModeSelect.addEventListener('change', () => {
+            const value = answerModeSelect.value;
+            if (isMobileAnswerMode(value) && value !== this.mobileAnswerMode) {
+                this.setMobileAnswerMode(value);
             }
         });
         document.addEventListener('keydown', (event) => {
@@ -1318,6 +1338,12 @@ export class GameScene extends Phaser.Scene {
         return savedBaseDifficulty ? normalizeBaseMathsDifficulty(savedBaseDifficulty) ?? 'year3' : 'year3';
     }
 
+    private readSavedMobileAnswerMode(): MobileAnswerMode {
+        const savedAnswerMode = this.readUrlOption(URL_OPTION_KEYS.answerMode)
+            ?? window.localStorage.getItem(ANSWER_MODE_STORAGE_KEY);
+        return savedAnswerMode && isMobileAnswerMode(savedAnswerMode) ? savedAnswerMode : 'multiple-choice';
+    }
+
     private readSavedMusicVolume(): number {
         const savedMusicVolumeText = this.readUrlOption(URL_OPTION_KEYS.musicVolume) ?? window.localStorage.getItem(MUSIC_VOLUME_STORAGE_KEY);
         if (savedMusicVolumeText === null) {
@@ -1342,6 +1368,7 @@ export class GameScene extends Phaser.Scene {
         const params = new URLSearchParams(window.location.search);
         params.set(URL_OPTION_KEYS.spawnRate, this.spawnRate);
         params.set(URL_OPTION_KEYS.baseDifficulty, this.baseDifficulty);
+        params.set(URL_OPTION_KEYS.answerMode, this.mobileAnswerMode);
         params.set(URL_OPTION_KEYS.musicVolume, String(this.musicVolume));
         params.set(URL_OPTION_KEYS.musicMuted, String(this.musicMuted));
         const query = params.toString();
@@ -1360,6 +1387,14 @@ export class GameScene extends Phaser.Scene {
         window.localStorage.setItem(BASE_DIFFICULTY_STORAGE_KEY, baseDifficulty);
         this.mathsSystem.setBaseDifficulty(baseDifficulty);
         this.panel.close();
+        this.syncSettingsControls();
+        this.syncUrlOptions();
+    }
+
+    private setMobileAnswerMode(answerMode: MobileAnswerMode): void {
+        this.mobileAnswerMode = answerMode;
+        window.localStorage.setItem(ANSWER_MODE_STORAGE_KEY, answerMode);
+        this.panel.setMobileAnswerMode(answerMode);
         this.syncSettingsControls();
         this.syncUrlOptions();
     }
@@ -1487,11 +1522,15 @@ export class GameScene extends Phaser.Scene {
         if (baseDifficultySelect) {
             baseDifficultySelect.value = this.baseDifficulty;
         }
+        const answerModeSelect = document.querySelector<HTMLSelectElement>('[data-testid="answer-mode-select"]');
+        if (answerModeSelect) {
+            answerModeSelect.value = this.mobileAnswerMode;
+        }
         const popup = document.querySelector<HTMLElement>('[data-testid="settings-popup"]');
         if (popup) {
             popup.setAttribute(
                 'aria-label',
-                `Settings, spawn rate ${SPAWN_RATE_LABELS[this.spawnRate]}, base difficulty ${BASE_MATHS_DIFFICULTY_LABELS[this.baseDifficulty]}`,
+                `Settings, spawn rate ${SPAWN_RATE_LABELS[this.spawnRate]}, base difficulty ${BASE_MATHS_DIFFICULTY_LABELS[this.baseDifficulty]}, mobile answers ${ANSWER_MODE_LABELS[this.mobileAnswerMode]}`,
             );
         }
     }
@@ -2224,6 +2263,8 @@ export class GameScene extends Phaser.Scene {
             setSpawnRate: (spawnRate: GameDifficulty) => this.setSpawnRate(spawnRate),
             getBaseDifficulty: () => this.baseDifficulty,
             setBaseDifficulty: (baseDifficulty: BaseMathsDifficulty) => this.setBaseDifficulty(baseDifficulty),
+            getMobileAnswerMode: () => this.mobileAnswerMode,
+            setMobileAnswerMode: (answerMode: MobileAnswerMode) => this.setMobileAnswerMode(answerMode),
             getMusicMuted: () => this.musicMuted,
             setMusicMuted: (muted: boolean) => this.setMusicMuted(muted),
             getMusicVolume: () => this.musicVolume,

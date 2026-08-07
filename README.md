@@ -2,7 +2,7 @@
 
 Arithmetic Annihilation is a maths tower-defence game based on the core mechanics from `vocab_annihilation`.
 
-Answer multiple-choice maths questions to build and upgrade towers. The questions come from `maths-game-problem-generator`, with the selected base difficulty mapped to UK school year levels.
+Answer maths questions to build and upgrade towers. Mobile play defaults to multiple choice, with an optional compact in-game keypad selected through Settings or the `answer-mode=type-answer` URL option. The questions come from `maths-game-problem-generator`, with the selected base difficulty mapped to UK school year levels.
 
 The start screen offers the original one-player game and a two-player game. Two-player mode can be played against a local computer opponent or against a friend using a six-character invite code. Each player builds on one half of the original 24×14 arena, protects a separate base, and answers questions to upgrade one monster generator that attacks the opposing base. It begins with Nibbles, then progressively adds Zappers, Chompers, and Mega Moo while increasing spawn speed and health. The opponent's half, base, monsters, and towers use pre-generated greyscale textures for an immediate visual distinction without per-frame filters.
 
