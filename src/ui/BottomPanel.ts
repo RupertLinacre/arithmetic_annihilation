@@ -248,10 +248,15 @@ export class BottomPanel {
         const feedback = this.createParagraph('feedback answer-review-answer', `Correct answer: ${question.correctAnswer}`);
         const instruction = this.createParagraph('meta-line answer-review-prompt', 'Type the correct answer to continue.');
         const answerInput = document.createElement('input');
-        answerInput.type = 'text';
+        answerInput.type = 'number';
+        answerInput.inputMode = 'decimal';
+        answerInput.step = 'any';
+        answerInput.min = '0';
+        answerInput.enterKeyHint = 'done';
         answerInput.className = 'answer-review-input';
         answerInput.dataset.testid = 'answer-review-input';
         answerInput.setAttribute('aria-label', 'Type the correct answer');
+        answerInput.setAttribute('aria-autocomplete', 'none');
         answerInput.setAttribute('autocomplete', 'off');
         answerInput.setAttribute('autocapitalize', 'off');
         answerInput.setAttribute('autocorrect', 'off');

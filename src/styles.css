@@ -346,6 +346,18 @@ body {
   border-color: rgba(243, 182, 75, 0.72);
   background: rgba(247, 240, 214, 0.12);
 }
+
+.answer-review-input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.answer-review-input[type="number"]::-webkit-inner-spin-button,
+.answer-review-input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
   overflow-x: hidden;
   overflow-y: auto;
   color: var(--ink);
