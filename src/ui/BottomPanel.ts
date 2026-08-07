@@ -18,25 +18,22 @@ const TOWER_SELECTOR_OPTIONS: Record<TowerType, { imagePath?: string; markerClas
 };
 const BUILD_MENU_PADDING = 12;
 const BUILD_MENU_OFFSET = 14;
-const NUMBER_PAD_DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'] as const;
+const NUMBER_PAD_DIGITS = ['7', '8', '9', '4', '5', '6', '1', '2', '3'] as const;
 const MAX_NUMBER_PAD_LENGTH = 16;
 
 export type MobileAnswerMode = 'multiple-choice' | 'type-answer';
-type NumberPadControlKey = 'backspace' | 'submit';
+type NumberPadControlKey = 'backspace' | 'spacer';
 type NumberPadKey = string | NumberPadControlKey;
 
-export function getAnswerNumberPadKeys(answer: string, includeSubmit: boolean): NumberPadKey[] {
+export function getAnswerNumberPadKeys(answer: string): NumberPadKey[] {
     const specialKeys = [...new Set([...answer].filter((character) => !/[0-9\s]/.test(character)))];
-    const keys: NumberPadKey[] = [
-        ...NUMBER_PAD_DIGITS.slice(0, 5),
+    return [
+        ...NUMBER_PAD_DIGITS,
+        specialKeys[0] ?? 'spacer',
+        '0',
         'backspace',
-        ...NUMBER_PAD_DIGITS.slice(5),
-        ...specialKeys,
+        ...specialKeys.slice(1),
     ];
-    if (includeSubmit) {
-        keys.push('submit');
-    }
-    return keys;
 }
 
 export type BuildTowerSelection = TowerType;
@@ -69,6 +66,7 @@ export class BottomPanel {
     private popupAnchor: Vec2 | undefined;
     private currentQuestion: MathsQuestion | undefined;
     private pendingAction: PendingAction | undefined;
+    private correctAnswerAccepted = false;
     private questionActive = false;
     private correctionRequired = false;
     private selectedBuildTower: BuildTowerSelection = 'easy';
@@ -195,16 +193,20 @@ export class BottomPanel {
         this.hideBuildMenu();
         this.pendingAction = action;
         this.currentQuestion = this.maths.createQuestion(action.difficulty);
+        this.correctAnswerAccepted = false;
         this.setQuestionActive(true);
         this.showAnswerPopup();
     }
 
     private answer(answer: string): void {
-        if (!this.currentQuestion || !this.pendingAction) {
+        if (!this.currentQuestion || !this.pendingAction || this.correctAnswerAccepted) {
             return;
         }
 
         const correct = this.isCorrectAnswer(answer);
+        if (correct) {
+            this.correctAnswerAccepted = true;
+        }
         this.callbacks.onAnswered(correct, this.currentQuestion.difficulty);
         if (correct) {
             this.setQuestionActive(false);
@@ -259,8 +261,13 @@ export class BottomPanel {
         const answerControl = this.mobile
             ? this.mobileAnswerMode === 'multiple-choice'
                 ? this.createChoiceButtons(this.currentQuestion)
-                : this.createAnswerNumberPad(this.currentQuestion, (answer) => this.answer(answer), true)
-            : this.createAnswerInput(this.currentQuestion, 'answer-input');
+                : this.createAnswerNumberPad(this.currentQuestion, (answer) => this.answer(answer))
+            : this.createAnswerInput(
+                this.currentQuestion,
+                'answer-input',
+                (answer) => this.answer(answer),
+                (answer) => this.answer(answer),
+            );
 
         this.buildMenu.append(header, questionText, answerControl);
         this.buildMenu.hidden = false;
@@ -288,14 +295,22 @@ export class BottomPanel {
 
         const questionText = this.createQuestionText(question);
         const feedback = this.createParagraph('feedback answer-review-answer', `Incorrect — correct answer: ${question.correctAnswer}`);
-        const instruction = this.createParagraph('meta-line answer-review-prompt', 'Tap the correct answer to continue.');
-        const numberPad = this.createAnswerNumberPad(question, () => this.showQuestion(action), false);
+        const instruction = this.createParagraph(
+            'meta-line answer-review-prompt',
+            this.mobile ? 'Tap the correct answer to continue.' : 'Type the correct answer to continue.',
+        );
+        const correctionControl = this.mobile
+            ? this.createAnswerNumberPad(question, () => this.showQuestion(action))
+            : this.createAnswerInput(question, 'answer-review-input', () => this.showQuestion(action));
 
-        this.buildMenu.append(header, questionText, feedback, instruction, numberPad);
+        this.buildMenu.append(header, questionText, feedback, instruction, correctionControl);
         this.buildMenu.hidden = false;
         this.buildMenu.classList.add('is-answer-popup');
         this.buildMenu.classList.add('is-open');
         this.positionBuildMenu(this.popupAnchor);
+        if (!this.mobile) {
+            correctionControl.focus();
+        }
     }
 
     private showMessagePopup(kicker: string, titleText: string, detail: string, message: string): void {
@@ -394,7 +409,12 @@ export class BottomPanel {
         return row;
     }
 
-    private createAnswerInput(question: MathsQuestion, testId: string): HTMLInputElement {
+    private createAnswerInput(
+        question: MathsQuestion,
+        testId: string,
+        onAccept: (answer: string) => void,
+        onReject?: (answer: string) => void,
+    ): HTMLInputElement {
         const answerInput = document.createElement('input');
         answerInput.type = 'text';
         answerInput.inputMode = 'numeric';
@@ -411,11 +431,13 @@ export class BottomPanel {
             }
 
             event.preventDefault();
-            this.answer(answerInput.value);
+            if (!this.isCorrectAnswer(answerInput.value) && onReject) {
+                onReject(answerInput.value);
+            }
         });
         answerInput.addEventListener('input', () => {
             if (this.normalizeAnswerInput(answerInput.value) === this.normalizeAnswerInput(question.correctAnswer)) {
-                this.answer(answerInput.value);
+                onAccept(answerInput.value);
             }
         });
         return answerInput;
@@ -424,7 +446,6 @@ export class BottomPanel {
     private createAnswerNumberPad(
         question: MathsQuestion,
         onSubmit: (answer: string) => void,
-        requireSubmit: boolean,
     ): HTMLDivElement {
         const numberPad = this.createDiv('answer-number-pad');
         numberPad.dataset.testid = 'answer-number-pad';
@@ -443,20 +464,23 @@ export class BottomPanel {
             value = nextValue;
             display.textContent = value || '—';
             display.classList.toggle('is-empty', value.length === 0);
-            if (!requireSubmit && value && this.isCorrectAnswer(value)) {
+            if (value && this.isCorrectAnswer(value)) {
                 onSubmit(value);
             }
         };
 
-        const numberPadKeys = getAnswerNumberPadKeys(question.correctAnswer, requireSubmit);
-        const columnCount = Math.min(7, Math.max(6, Math.ceil(numberPadKeys.length / 2)));
-        keys.style.setProperty('--answer-key-columns', String(columnCount));
+        const numberPadKeys = getAnswerNumberPadKeys(question.correctAnswer);
         numberPadKeys.forEach((key) => {
+            if (key === 'spacer') {
+                const spacer = this.createDiv('answer-number-key-spacer');
+                spacer.setAttribute('aria-hidden', 'true');
+                keys.append(spacer);
+                return;
+            }
             const isBackspace = key === 'backspace';
-            const isSubmit = key === 'submit';
             const button = this.createButton(
-                `answer-number-key${isBackspace ? ' answer-number-key-backspace' : ''}${isSubmit ? ' answer-number-key-submit' : ''}`,
-                isBackspace ? '⌫' : isSubmit ? '✓' : key,
+                `answer-number-key${isBackspace ? ' answer-number-key-backspace' : ''}`,
+                isBackspace ? '⌫' : key,
                 'answer-number-key',
             );
             button.dataset.key = key;
@@ -464,23 +488,15 @@ export class BottomPanel {
                 'aria-label',
                 isBackspace
                     ? 'Delete last character'
-                    : isSubmit
-                        ? 'Check answer'
-                        : key === '.'
-                            ? 'Decimal point'
-                            : key === '/'
-                                ? 'Fraction slash'
-                                : /^[0-9]$/.test(key) ? `Digit ${key}` : key,
+                    : key === '.'
+                        ? 'Decimal point'
+                        : key === '/'
+                            ? 'Fraction slash'
+                            : /^[0-9]$/.test(key) ? `Digit ${key}` : key,
             );
             button.addEventListener('click', () => {
                 if (isBackspace) {
                     updateValue(value.slice(0, -1));
-                    return;
-                }
-                if (isSubmit) {
-                    if (value) {
-                        onSubmit(value);
-                    }
                     return;
                 }
                 if (!/^[0-9]$/.test(key) && value.includes(key)) {

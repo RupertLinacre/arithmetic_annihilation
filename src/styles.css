@@ -375,7 +375,7 @@ body {
 
 .answer-number-pad-keys {
   display: grid;
-  grid-template-columns: repeat(var(--answer-key-columns, 6), minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
 }
 
@@ -395,10 +395,8 @@ body {
   color: var(--amber);
 }
 
-.answer-number-key-submit {
-  border-color: rgba(79, 180, 119, 0.55);
-  color: #b8f3cc;
-  background: rgba(79, 180, 119, 0.14);
+.answer-number-key-spacer {
+  min-height: 34px;
 }
 
   overflow-x: hidden;

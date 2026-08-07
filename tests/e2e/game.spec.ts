@@ -209,21 +209,22 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await answerInput.press('Enter');
     await expect(page.getByTestId('build-popup')).toContainText(definitionText ?? '');
     await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
-    await expect(page.getByTestId('build-popup')).toContainText('Tap the correct answer to continue.');
+    await expect(page.getByTestId('build-popup')).toContainText('Type the correct answer to continue.');
     await expect(page.getByTestId('answer-review-close')).toHaveCount(0);
-    await expect(page.getByTestId('answer-review-input')).toHaveCount(0);
-    await expect(page.getByTestId('answer-number-pad')).toBeVisible();
+    const reviewInput = page.getByTestId('answer-review-input');
+    await expect(reviewInput).toBeVisible();
+    await expect(reviewInput).toBeFocused();
+    await expect(page.getByTestId('answer-number-pad')).toHaveCount(0);
     await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
     await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
     const wrongDigit = correctAnswer === '9' ? '8' : '9';
-    await page.locator(`[data-testid="answer-number-key"][data-key="${wrongDigit}"]`).click();
-    await expect(page.getByTestId('answer-number-pad-display')).toHaveText(wrongDigit);
-    await page.locator('[data-testid="answer-number-key"][data-key="backspace"]').click();
-    await expect(page.getByTestId('answer-number-pad-display')).toHaveText('—');
+    await reviewInput.fill(wrongDigit);
+    await expect(reviewInput).toHaveValue(wrongDigit);
+    await reviewInput.fill('');
     const reviewPausedElapsedMs = await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());
     await page.waitForTimeout(150);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs())).toBe(reviewPausedElapsedMs);
-    await enterNumberPadAnswer(page, correctAnswer!);
+    await reviewInput.fill(correctAnswer!);
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
     await expect(page.getByTestId('answer-input')).toBeVisible();
     const nextCorrectAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
@@ -241,7 +242,10 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
     const secondCorrectAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
     expect(secondCorrectAnswer).toBeTruthy();
-    await page.getByTestId('answer-input').fill(secondCorrectAnswer!);
+    const secondAnswerInput = page.getByTestId('answer-input');
+    await secondAnswerInput.fill(secondCorrectAnswer!);
+    await secondAnswerInput.press('Enter');
+    await expect(page.getByTestId('build-popup').locator('.feedback.good', { hasText: 'Correct' })).toHaveCount(1);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTypes())).toEqual(['missile', 'missile']);
 
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount())).toBeGreaterThan(0);
@@ -364,8 +368,8 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
     const typedAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
     expect(typedAnswer).toBeTruthy();
     await enterNumberPadAnswer(page, typedAnswer!);
-    await page.locator('[data-testid="answer-number-key"][data-key="submit"]').click();
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
+    await expect(page.locator('[data-testid="answer-number-key"][data-key="submit"]')).toHaveCount(0);
 });
 
 test('versus computer starts a local multiplayer battle with opponent visuals', async ({ page }) => {
