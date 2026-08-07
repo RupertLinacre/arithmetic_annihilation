@@ -189,23 +189,19 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await answerInput.fill('not-the-answer');
     await answerInput.press('Enter');
     await expect(page.getByTestId('build-popup')).toContainText(definitionText ?? '');
-    await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
+    await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
+    await expect(page.getByTestId('answer-review-delay')).toHaveText('Game resumes in 5 seconds.');
     await expect(page.getByTestId('answer-review-close')).toHaveCount(0);
-    const answerReviewInput = page.getByTestId('answer-review-input');
-    await expect(answerReviewInput).toBeVisible();
-    await expect(answerReviewInput).toBeFocused();
+    await expect(page.getByTestId('answer-review-input')).toHaveCount(0);
     await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
-    await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
-    await expect(answerReviewInput).toBeVisible();
-    const firstWrongCorrection = correctAnswer === '123' ? '124' : '123';
-    const secondWrongCorrection = correctAnswer === '0' ? '1' : '0';
-    await answerReviewInput.fill(firstWrongCorrection);
-    await expect(answerReviewInput).toHaveValue(firstWrongCorrection);
-    await answerReviewInput.fill(secondWrongCorrection);
+    await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
     const reviewPausedElapsedMs = await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());
     await page.waitForTimeout(150);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs())).toBe(reviewPausedElapsedMs);
-    await answerReviewInput.fill(correctAnswer!);
+    await expect(page.getByTestId('build-popup')).toBeHidden({ timeout: 6500 });
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(false);
+
+    await clickWorldPoint(page, buildable!.worldX, buildable!.worldY);
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(0);
     await expect(page.getByTestId('answer-input')).toBeVisible();
     const nextCorrectAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
@@ -258,7 +254,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     expect(errors).toEqual([]);
 });
 
-test('mobile answer flow keeps choices and requires typed correction after a wrong tap', async ({ page }) => {
+test('mobile answer flow keeps choices and pauses after a wrong tap', async ({ page }) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await page.addInitScript(() => {
         Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: () => 1 });
@@ -325,17 +321,11 @@ test('mobile answer flow keeps choices and requires typed correction after a wro
     const correctAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
     expect(correctAnswer).toBeTruthy();
     await page.locator('[data-testid="answer-button"][data-correct="false"]').first().click();
-    await expect(page.getByTestId('build-popup')).toContainText(`Correct answer: ${correctAnswer}`);
-    const answerReviewInput = page.getByTestId('answer-review-input');
-    await expect(answerReviewInput).toBeVisible();
-    await expect(answerReviewInput).toBeFocused();
-    await expect(answerReviewInput).toHaveAttribute('type', 'number');
-    await expect(answerReviewInput).toHaveAttribute('inputmode', 'decimal');
-    await expect(answerReviewInput).toHaveAttribute('enterkeyhint', 'done');
-    await expect(answerReviewInput).toHaveAttribute('autocomplete', 'off');
-    await answerReviewInput.fill(correctAnswer === '0' ? '1' : '0');
-    await answerReviewInput.fill(correctAnswer!);
-    await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
+    await expect(page.getByTestId('build-popup')).toContainText(`Incorrect — correct answer: ${correctAnswer}`);
+    await expect(page.getByTestId('answer-review-delay')).toHaveText('Game resumes in 5 seconds.');
+    await expect(page.getByTestId('answer-review-input')).toHaveCount(0);
+    await expect(page.getByTestId('build-popup')).toBeHidden({ timeout: 6500 });
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(false);
     await expect(page.getByTestId('answer-input')).toHaveCount(0);
 });
 

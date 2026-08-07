@@ -17,6 +17,7 @@ const TOWER_SELECTOR_OPTIONS: Record<TowerType, { imagePath?: string; markerClas
 };
 const BUILD_MENU_PADDING = 12;
 const BUILD_MENU_OFFSET = 14;
+const INCORRECT_ANSWER_DELAY_MS = 5000;
 
 export type BuildTowerSelection = TowerType;
 
@@ -182,8 +183,7 @@ export class BottomPanel {
             return;
         }
 
-        const action = this.pendingAction;
-        this.showIncorrectAnswerPopup(action);
+        this.showIncorrectAnswerPopup();
     }
 
     private hideBuildMenu(): void {
@@ -230,7 +230,7 @@ export class BottomPanel {
         }
     }
 
-    private showIncorrectAnswerPopup(action: PendingAction): void {
+    private showIncorrectAnswerPopup(): void {
         if (!this.currentQuestion || !this.popupAnchor) {
             return;
         }
@@ -245,39 +245,15 @@ export class BottomPanel {
         header.append(heading);
 
         const questionText = this.createQuestionText(question);
-        const feedback = this.createParagraph('feedback answer-review-answer', `Correct answer: ${question.correctAnswer}`);
-        const instruction = this.createParagraph('meta-line answer-review-prompt', 'Type the correct answer to continue.');
-        const answerInput = document.createElement('input');
-        answerInput.type = 'number';
-        answerInput.inputMode = 'decimal';
-        answerInput.step = 'any';
-        answerInput.min = '0';
-        answerInput.enterKeyHint = 'done';
-        answerInput.className = 'answer-review-input';
-        answerInput.dataset.testid = 'answer-review-input';
-        answerInput.setAttribute('aria-label', 'Type the correct answer');
-        answerInput.setAttribute('aria-autocomplete', 'none');
-        answerInput.setAttribute('autocomplete', 'off');
-        answerInput.setAttribute('autocapitalize', 'off');
-        answerInput.setAttribute('autocorrect', 'off');
-        answerInput.setAttribute('spellcheck', 'false');
-        answerInput.addEventListener('input', () => {
-            if (!this.currentQuestion) {
-                return;
-            }
+        const feedback = this.createParagraph('feedback answer-review-answer', `Incorrect — correct answer: ${question.correctAnswer}`);
+        const instruction = this.createParagraph('meta-line answer-review-prompt', 'Game resumes in 5 seconds.');
+        instruction.dataset.testid = 'answer-review-delay';
 
-            if (!this.isCorrectAnswer(answerInput.value)) {
-                return;
-            }
-
-            this.showQuestion(action);
-        });
-
-        this.buildMenu.append(header, questionText, feedback, instruction, answerInput);
+        this.buildMenu.append(header, questionText, feedback, instruction);
         this.buildMenu.hidden = false;
         this.buildMenu.classList.add('is-open');
         this.positionBuildMenu(this.popupAnchor);
-        answerInput.focus();
+        this.closeTimeoutId = window.setTimeout(() => this.close(true), INCORRECT_ANSWER_DELAY_MS);
     }
 
     private showMessagePopup(kicker: string, titleText: string, detail: string, message: string): void {
