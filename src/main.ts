@@ -75,6 +75,10 @@ let game: Phaser.Game | undefined;
 
 function startGame(): void {
     if (game) {
+        const scene = game.scene.getScene('GameScene');
+        if (scene instanceof GameScene && multiplayerSession.isMultiplayer) {
+            scene.restartMultiplayerRound(multiplayerSession.seed);
+        }
         return;
     }
     document.querySelector<HTMLElement>('[data-testid="mode-screen"]')!.hidden = true;

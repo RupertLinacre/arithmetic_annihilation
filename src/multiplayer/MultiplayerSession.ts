@@ -21,6 +21,7 @@ type WireMessage =
     | { kind: 'resyncRequest'; tick: number }
     | { kind: 'resync'; snapshot: MultiplayerSnapshot }
     | { kind: 'gameEnd'; tick: number; winner: TeamId }
+    | { kind: 'rematchRequest' }
     | { kind: 'error'; message: string };
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -157,6 +158,24 @@ class MultiplayerSession {
         return this.seed;
     }
 
+    requestRematch(): number | undefined {
+        if (!this.isMultiplayer) {
+            return undefined;
+        }
+        if (this.isComputerOpponent) {
+            this.seed = Math.floor(Math.random() * 1_000_000_000);
+            this.emitStart();
+            return this.seed;
+        }
+        if (this.role === 'host') {
+            return this.startMatch();
+        }
+        if (this.connection?.open) {
+            this.connection.send({ kind: 'rematchRequest' } satisfies WireMessage);
+        }
+        return undefined;
+    }
+
     sendAction(command: MultiplayerCommand): void {
         if (command.teamId !== this.localTeamId) {
             return;
@@ -272,6 +291,10 @@ class MultiplayerSession {
         }
         if (message.kind === 'resyncRequest') {
             this.resyncRequestListeners.forEach((listener) => listener(message.tick));
+            return;
+        }
+        if (message.kind === 'rematchRequest') {
+            this.startMatch();
         }
     }
 

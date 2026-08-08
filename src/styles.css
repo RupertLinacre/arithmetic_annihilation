@@ -547,6 +547,30 @@ body {
   min-width: 128px;
 }
 
+.is-multiplayer #hud .base-status {
+  border: 1px solid rgba(40, 120, 255, 0.62);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(40, 120, 255, 0.13);
+}
+
+.is-multiplayer #hud .base-status,
+.is-multiplayer #hud .base-status strong {
+  color: #a9d4ff;
+}
+
+.is-multiplayer #hud .rival-base-status {
+  border: 1px solid rgba(227, 50, 79, 0.64);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #ffacb9;
+  background: rgba(227, 50, 79, 0.14);
+}
+
+.is-multiplayer #hud .rival-base-status strong {
+  color: #ffd1d8;
+}
+
 .base-meter {
   width: 58px;
   height: 8px;
@@ -1406,6 +1430,16 @@ html.is-mobile #hud .base-status strong {
 html.is-mobile #hud .base-status {
   min-width: 0;
   font-weight: 800;
+}
+
+html.is-mobile.is-multiplayer #hud .base-status,
+html.is-mobile.is-multiplayer #hud .base-status strong {
+  color: #a9d4ff;
+}
+
+html.is-mobile.is-multiplayer #hud .base-status,
+html.is-mobile.is-multiplayer #hud .rival-base-status {
+  padding: 2px 5px;
 }
 
 html.is-mobile #hud .base-meter {

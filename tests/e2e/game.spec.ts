@@ -11,6 +11,7 @@ declare global {
     interface Window {
         arithmeticAnnihilation?: {
             getFirstBuildableCell: () => BuildableCell | null;
+            getOpponentHalfCell: () => BuildableCell | null;
             getBaseCell: () => BuildableCell;
             getCanvasPointForWorldPoint: (worldX: number, worldY: number) => { x: number; y: number };
             getMapViewportBounds: () => { left: number; top: number; right: number; bottom: number };
@@ -27,6 +28,8 @@ declare global {
             getBaseTextureKeys: () => { solar: string; lunar: string };
             getTowerTextureKeys: () => string[];
             getEnemyTextureKeys: () => string[];
+            getMultiplayerSeed: () => number;
+            finishMultiplayerGame: (winner: 'solar' | 'lunar') => void;
             getBaseHealth: () => number;
             getElapsedMs: () => number;
             isPaused: () => boolean;
@@ -396,12 +399,18 @@ test('versus computer starts a local multiplayer battle with opponent visuals', 
         towers: window.arithmeticAnnihilation!.getTowerTextureKeys(),
         enemies: window.arithmeticAnnihilation!.getEnemyTextureKeys(),
     }));
-    expect(visualKeys.terrain.some((key) => key.startsWith('opponent:'))).toBe(true);
-    expect(visualKeys.terrain.some((key) => !key.startsWith('opponent:'))).toBe(true);
-    expect(visualKeys.bases.solar.startsWith('opponent:')).toBe(false);
-    expect(visualKeys.bases.lunar.startsWith('opponent:')).toBe(true);
-    expect(visualKeys.towers.every((key) => key.startsWith('opponent:'))).toBe(true);
-    expect(visualKeys.enemies.every((key) => key.startsWith('opponent:'))).toBe(true);
+    expect(visualKeys.terrain.every((key) => !key.startsWith('team-'))).toBe(true);
+    expect(visualKeys.bases.solar).toBe('sprites/generated/base_blue.png');
+    expect(visualKeys.bases.lunar).toBe('sprites/generated/base_red.png');
+    expect(visualKeys.towers.every((key) => key.startsWith('sprites/generated/tower_red_'))).toBe(true);
+    expect(visualKeys.enemies.every((key) => key.startsWith('sprites/generated/monster_red_'))).toBe(true);
+    await expect(page.getByText('YOU · BLUE')).toHaveCount(0);
+    await expect(page.getByText('OPPONENT · RED')).toHaveCount(0);
+
+    const opponentCell = await page.evaluate(() => window.arithmeticAnnihilation!.getOpponentHalfCell());
+    expect(opponentCell).not.toBeNull();
+    await clickWorldPoint(page, opponentCell!.worldX, opponentCell!.worldY);
+    await expect(page.getByTestId('game-status-message')).toHaveText("You're blue — you can only build on your side of the map.");
     expect(errors).toEqual([]);
 });
 
@@ -443,6 +452,13 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await expect(host.locator('[data-stat="rival-base-status"]')).toBeVisible();
     await expect(guest.locator('[data-stat="rival-base-status"]')).toBeVisible();
 
+    const hostBases = await host.evaluate(() => window.arithmeticAnnihilation!.getBaseTextureKeys());
+    const guestBases = await guest.evaluate(() => window.arithmeticAnnihilation!.getBaseTextureKeys());
+    expect(hostBases.solar).toBe('sprites/generated/base_blue.png');
+    expect(hostBases.lunar).toBe('sprites/generated/base_red.png');
+    expect(guestBases.solar).toBe('sprites/generated/base_red.png');
+    expect(guestBases.lunar).toBe('sprites/generated/base_blue.png');
+
     await expect.poll(() => guest.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     const guestCell = await guest.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
     expect(guestCell).not.toBeNull();
@@ -480,6 +496,22 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevelsByTrack().solar.advanced), { timeout: 20_000 }).toBe(1);
     await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs()), { timeout: 5_000 }).toBeGreaterThan(2_200);
     expect(await guest.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerResyncCount())).toBe(0);
+
+    const firstRoundSeed = await host.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerSeed());
+    await host.evaluate(() => window.arithmeticAnnihilation!.finishMultiplayerGame('solar'));
+    await expect(host.getByTestId('game-over')).toBeVisible();
+    await expect(guest.getByTestId('game-over')).toBeVisible();
+    await guest.getByTestId('restart-game-button').click();
+    await expect(host.getByTestId('game-over')).toBeHidden();
+    await expect(guest.getByTestId('game-over')).toBeHidden();
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerSeed())).not.toBe(firstRoundSeed);
+    await expect.poll(async () => {
+        const hostSeed = await host.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerSeed());
+        const guestSeed = await guest.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerSeed());
+        return hostSeed === guestSeed;
+    }).toBe(true);
+    await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(0);
+    await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(0);
     expect(errors).toEqual([]);
 
     const guestElapsedBeforeDisconnect = await guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());
