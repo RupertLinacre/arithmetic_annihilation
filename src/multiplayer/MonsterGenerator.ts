@@ -4,6 +4,7 @@ import { OFFENSE_HEALTH_PER_MINUTE_PER_POINT } from './BalanceConfig';
 import type { MonsterGeneratorTrack, MonsterGeneratorType, TowerDifficulty } from '../types';
 
 export const MAX_MONSTER_GENERATOR_LEVEL = 16;
+export const WRONG_ANSWER_NIBBLE_LEVEL_MULTIPLIER = 1 / 3;
 
 export interface MonsterMix {
     types: readonly MonsterGeneratorType[];
@@ -13,6 +14,10 @@ export interface MonsterMix {
 
 export function getGeneratorQuestionValue(track: MonsterGeneratorTrack): 1 | 2 {
     return track === 'nibble' ? 1 : 2;
+}
+
+export function getWrongAnswerNibbleLevelIncrease(questionValue: 1 | 2): number {
+    return questionValue * WRONG_ANSWER_NIBBLE_LEVEL_MULTIPLIER;
 }
 
 export function getGeneratorUpgradeDifficulty(track: MonsterGeneratorTrack): TowerDifficulty {

@@ -523,6 +523,13 @@ body {
   color: #fff3cc;
 }
 
+#game-status-message[data-state="placement-warning"] {
+  border-color: rgba(92, 165, 255, 0.78);
+  background: rgba(40, 120, 255, 0.2);
+  color: #e8f4ff;
+  font-weight: 800;
+}
+
 #game-status-message[hidden] {
   display: none;
 }
@@ -1460,6 +1467,19 @@ html.is-mobile .side-info {
 
 html.is-mobile .side-info #game-status-message {
   font-size: 14px;
+}
+
+html.is-mobile .side-info #game-status-message[data-state="placement-warning"] {
+  min-height: 56px;
+  padding: 10px 12px;
+  border-width: 2px;
+  border-color: #75b7ff;
+  background: rgba(24, 92, 194, 0.9);
+  box-shadow: 0 0 0 3px rgba(40, 120, 255, 0.22), 0 8px 20px rgba(0, 0, 0, 0.34);
+  color: #ffffff;
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
 }
 
 /* Docked question / answer / review panel inside the info column. */

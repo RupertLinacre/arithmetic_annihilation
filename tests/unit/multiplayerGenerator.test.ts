@@ -9,6 +9,7 @@ import {
     getGeneratorSpawnPeriodMs,
     getGeneratorUpgradeDifficulty,
     getMonsterMix,
+    getWrongAnswerNibbleLevelIncrease,
 } from '../../src/multiplayer/MonsterGenerator';
 
 describe('multiplayer monster generator progression', () => {
@@ -27,6 +28,14 @@ describe('multiplayer monster generator progression', () => {
         expect(getGeneratorHealthPerMinute('advanced', 8)).toBe(OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 16);
         expect(getGeneratorSpawnPeriodMs('nibble', 1)).toBeCloseTo(
             getExpectedMonsterHealth('nibble', 1) * 60_000 / OFFENSE_HEALTH_PER_MINUTE_PER_POINT,
+        );
+    });
+
+    it('applies one third of the former Nibble rate increase for wrong answers', () => {
+        expect(getWrongAnswerNibbleLevelIncrease(1)).toBeCloseTo(1 / 3);
+        expect(getWrongAnswerNibbleLevelIncrease(2)).toBeCloseTo(2 / 3);
+        expect(getGeneratorHealthPerMinute('nibble', getWrongAnswerNibbleLevelIncrease(1))).toBeCloseTo(
+            OFFENSE_HEALTH_PER_MINUTE_PER_POINT / 3,
         );
     });
 

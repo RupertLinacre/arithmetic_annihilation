@@ -410,7 +410,7 @@ test('versus computer starts a local multiplayer battle with opponent visuals', 
     const opponentCell = await page.evaluate(() => window.arithmeticAnnihilation!.getOpponentHalfCell());
     expect(opponentCell).not.toBeNull();
     await clickWorldPoint(page, opponentCell!.worldX, opponentCell!.worldY);
-    await expect(page.getByTestId('game-status-message')).toHaveText("You're blue — you can only build on your side of the map.");
+    await expect(page.getByTestId('game-status-message')).toHaveText("BLUE SIDE ONLY — you're blue, so build on your side of the map.");
     expect(errors).toEqual([]);
 });
 

@@ -15,6 +15,7 @@ import {
     getGeneratorSpawnPeriodMs,
     getGeneratorUpgradeDifficulty,
     getMonsterMix,
+    getWrongAnswerNibbleLevelIncrease,
     MAX_MONSTER_GENERATOR_LEVEL,
 } from '../multiplayer/MonsterGenerator';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
@@ -808,8 +809,8 @@ export class GameScene extends Phaser.Scene {
             window.clearTimeout(this.placementWarningTimeoutId);
         }
         message.hidden = false;
-        message.textContent = "You're blue — you can only build on your side of the map.";
-        message.dataset.state = 'instruction';
+        message.textContent = "BLUE SIDE ONLY — you're blue, so build on your side of the map.";
+        message.dataset.state = 'placement-warning';
         this.placementWarningTimeoutId = window.setTimeout(() => {
             this.placementWarningTimeoutId = undefined;
             this.syncStatusMessage();
@@ -886,7 +887,7 @@ export class GameScene extends Phaser.Scene {
             const generator = this.generators.find((candidate) => candidate.teamId === command.teamId && candidate.track === command.track);
             if (generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
                 const wasOff = generator.level === 0;
-                generator.level += 1;
+                generator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, generator.level + 1);
                 if (wasOff) {
                     this.spawnMultiplayerEnemy(generator);
                 }
@@ -901,7 +902,10 @@ export class GameScene extends Phaser.Scene {
         } else {
             const rivalGenerator = this.generators.find((candidate) => candidate.teamId === opponentOf(command.teamId) && candidate.track === 'nibble');
             if (rivalGenerator) {
-                rivalGenerator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, rivalGenerator.level + command.value);
+                rivalGenerator.level = Math.min(
+                    MAX_MONSTER_GENERATOR_LEVEL,
+                    rivalGenerator.level + getWrongAnswerNibbleLevelIncrease(command.value),
+                );
             }
         }
     }
@@ -1200,12 +1204,13 @@ export class GameScene extends Phaser.Scene {
             }
             const mix = getMonsterMix(track, generator.level);
             const unlockLabel = track === 'nibble' ? 'unlock Nibbles' : 'unlock Zappers';
-            level.textContent = generator.level === 0 ? `Off · ${unlockLabel}` : `L${generator.level} · ${mix.description}`;
+            const displayedLevel = Number.isInteger(generator.level) ? `${generator.level}` : generator.level.toFixed(1);
+            level.textContent = generator.level === 0 ? `Off · ${unlockLabel}` : `L${displayedLevel} · ${mix.description}`;
             progress.style.transform = `scaleX(${generator.progress})`;
             button.disabled = generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver;
             button.title = generator.level === 0
                 ? `Answer a ${track === 'nibble' ? 'base-level' : 'one-level-higher'} question to ${unlockLabel}`
-                : `Level ${generator.level}: ${mix.description}`;
+                : `Level ${displayedLevel}: ${mix.description}`;
         }
     }
 
