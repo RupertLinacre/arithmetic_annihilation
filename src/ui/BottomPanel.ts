@@ -1,8 +1,9 @@
 import { DIFFICULTY_LABELS, TOWER_BUILD_DIFFICULTIES, TOWER_LABELS } from '../config/gameConfig';
-import { canUpgradeTower, getUpgradeQuestionDifficulty } from '../entities/Tower';
+import { canUpgradeTower, getMultiplayerUpgradeQuestionDifficulty, getUpgradeQuestionDifficulty } from '../entities/Tower';
 import { getTowerStats } from '../pathfinding/ThreatMap';
 import { MathsQuestionSystem } from '../systems/MathsQuestionSystem';
 import type { GridPoint, MathsQuestion, TowerDifficulty, TowerState, TowerType, Vec2 } from '../types';
+import { getMultiplayerTowerQuestionDifficulty } from '../multiplayer/BalanceConfig';
 
 const BUILD_TOWER_TYPES: TowerType[] = ['easy', 'spray', 'missile', 'flamethrower', 'cluster', 'wall', 'airstrike'];
 const spritePath = (path: string): string => `${import.meta.env.BASE_URL}${path}`;
@@ -17,24 +18,43 @@ const TOWER_SELECTOR_OPTIONS: Record<TowerType, { imagePath?: string; markerClas
 };
 const BUILD_MENU_PADDING = 12;
 const BUILD_MENU_OFFSET = 14;
+const NUMBER_PAD_DIGITS = ['7', '8', '9', '4', '5', '6', '1', '2', '3'] as const;
+const MAX_NUMBER_PAD_LENGTH = 16;
+
+export type MobileAnswerMode = 'multiple-choice' | 'type-answer';
+type NumberPadControlKey = 'backspace' | 'spacer';
+type NumberPadKey = string | NumberPadControlKey;
+
+export function getAnswerNumberPadKeys(answer: string): NumberPadKey[] {
+    const specialKeys = [...new Set([...answer].filter((character) => !/[0-9\s]/.test(character)))];
+    return [
+        ...NUMBER_PAD_DIGITS,
+        specialKeys[0] ?? 'spacer',
+        '0',
+        'backspace',
+        ...specialKeys.slice(1),
+    ];
+}
 
 export type BuildTowerSelection = TowerType;
 
 interface BottomPanelCallbacks {
     onBuild: (cell: GridPoint, towerType: TowerType) => void;
     onUpgrade: (tower: TowerState) => void;
-    onAnswered: (correct: boolean) => void;
+    onAnswered: (correct: boolean, difficulty: TowerDifficulty) => void;
     onQuestionStateChange: (isActive: boolean) => void;
     onClose: () => void;
 }
 
 export interface BottomPanelMobileOptions {
     infoHost: HTMLElement;
+    answerMode: MobileAnswerMode;
 }
 
 type PendingAction =
     | { kind: 'build'; cell: GridPoint; towerType: TowerType; difficulty: TowerDifficulty }
-    | { kind: 'upgrade'; tower: TowerState; difficulty: TowerDifficulty };
+    | { kind: 'upgrade'; tower: TowerState; difficulty: TowerDifficulty }
+    | { kind: 'custom'; difficulty: TowerDifficulty; onSuccess: () => void };
 
 export class BottomPanel {
     private readonly frame = document.querySelector<HTMLElement>('#game-frame')!;
@@ -46,18 +66,23 @@ export class BottomPanel {
     private popupAnchor: Vec2 | undefined;
     private currentQuestion: MathsQuestion | undefined;
     private pendingAction: PendingAction | undefined;
+    private correctAnswerAccepted = false;
     private questionActive = false;
     private correctionRequired = false;
     private selectedBuildTower: BuildTowerSelection = 'easy';
     private panelExpanded = true;
     private readonly mobile: BottomPanelMobileOptions | undefined;
+    private mobileAnswerMode: MobileAnswerMode;
+    private extraSelectorControls: HTMLElement[] = [];
 
     constructor(
         private readonly maths: MathsQuestionSystem,
         private readonly callbacks: BottomPanelCallbacks,
         mobile?: BottomPanelMobileOptions,
+        private readonly multiplayer = false,
     ) {
         this.mobile = mobile;
+        this.mobileAnswerMode = mobile?.answerMode ?? 'multiple-choice';
         this.buildMenu = document.createElement('section');
         this.buildMenu.className = 'build-popup';
         this.buildMenu.dataset.testid = 'build-popup';
@@ -79,7 +104,10 @@ export class BottomPanel {
         this.clearPendingClose();
         this.popupAnchor = anchor;
         const towerType = this.resolveBuildTower();
-        this.showQuestion({ kind: 'build', cell, towerType, difficulty: TOWER_BUILD_DIFFICULTIES[towerType] });
+        const difficulty = this.multiplayer
+            ? getMultiplayerTowerQuestionDifficulty(towerType)
+            : TOWER_BUILD_DIFFICULTIES[towerType];
+        this.showQuestion({ kind: 'build', cell, towerType, difficulty });
     }
 
     openUpgrade(tower: TowerState, anchor: Vec2): void {
@@ -104,7 +132,18 @@ export class BottomPanel {
         }
 
         const nextLevel = tower.level + 1;
-        this.showQuestion({ kind: 'upgrade', tower, difficulty: getUpgradeQuestionDifficulty(tower, nextLevel) });
+        const difficulty = this.multiplayer
+            ? getMultiplayerUpgradeQuestionDifficulty(tower)
+            : getUpgradeQuestionDifficulty(tower, nextLevel);
+        this.showQuestion({ kind: 'upgrade', tower, difficulty });
+    }
+
+    openCustomQuestion(difficulty: TowerDifficulty, anchor: Vec2, onSuccess: () => void): void {
+        if (this.correctionRequired) {
+            return;
+        }
+        this.popupAnchor = anchor;
+        this.showQuestion({ kind: 'custom', difficulty, onSuccess });
     }
 
     close(force = false): void {
@@ -134,31 +173,51 @@ export class BottomPanel {
         return this.currentQuestion?.correctAnswer;
     }
 
+    getCurrentQuestionYearLevel(): string | undefined {
+        return this.currentQuestion?.yearLevel;
+    }
+
+    setMobileAnswerMode(answerMode: MobileAnswerMode): void {
+        this.mobileAnswerMode = answerMode;
+        this.close(true);
+    }
+
+    setExtraSelectorControls(controls: HTMLElement[] = []): void {
+        this.extraSelectorControls = controls;
+        this.renderDifficultySelector();
+    }
+
     private showQuestion(action: PendingAction): void {
         this.clearPendingClose();
         this.correctionRequired = false;
         this.hideBuildMenu();
         this.pendingAction = action;
         this.currentQuestion = this.maths.createQuestion(action.difficulty);
+        this.correctAnswerAccepted = false;
         this.setQuestionActive(true);
         this.showAnswerPopup();
     }
 
     private answer(answer: string): void {
-        if (!this.currentQuestion || !this.pendingAction) {
+        if (!this.currentQuestion || !this.pendingAction || this.correctAnswerAccepted) {
             return;
         }
 
         const correct = this.isCorrectAnswer(answer);
-        this.callbacks.onAnswered(correct);
+        if (correct) {
+            this.correctAnswerAccepted = true;
+        }
+        this.callbacks.onAnswered(correct, this.currentQuestion.difficulty);
         if (correct) {
             this.setQuestionActive(false);
             this.buildMenu.append(this.createParagraph('feedback good', 'Correct'));
             this.buildMenu.style.pointerEvents = 'none';
             if (this.pendingAction.kind === 'build') {
                 this.callbacks.onBuild(this.pendingAction.cell, this.pendingAction.towerType);
-            } else {
+            } else if (this.pendingAction.kind === 'upgrade') {
                 this.callbacks.onUpgrade(this.pendingAction.tower);
+            } else {
+                this.pendingAction.onSuccess();
             }
             this.clearPendingClose();
             this.closeTimeoutId = window.setTimeout(() => this.close(), 220);
@@ -200,8 +259,15 @@ export class BottomPanel {
 
         const questionText = this.createQuestionText(this.currentQuestion);
         const answerControl = this.mobile
-            ? this.createChoiceButtons(this.currentQuestion)
-            : this.createAnswerInput(this.currentQuestion, 'answer-input');
+            ? this.mobileAnswerMode === 'multiple-choice'
+                ? this.createChoiceButtons(this.currentQuestion)
+                : this.createAnswerNumberPad(this.currentQuestion, (answer) => this.answer(answer))
+            : this.createAnswerInput(
+                this.currentQuestion,
+                'answer-input',
+                (answer) => this.answer(answer),
+                (answer) => this.answer(answer),
+            );
 
         this.buildMenu.append(header, questionText, answerControl);
         this.buildMenu.hidden = false;
@@ -228,34 +294,23 @@ export class BottomPanel {
         header.append(heading);
 
         const questionText = this.createQuestionText(question);
-        const feedback = this.createParagraph('feedback answer-review-answer', `Correct answer: ${question.correctAnswer}`);
-        const instruction = this.createParagraph('meta-line answer-review-prompt', 'Type the correct answer to continue.');
-        const answerInput = document.createElement('input');
-        answerInput.type = 'text';
-        answerInput.className = 'answer-review-input';
-        answerInput.dataset.testid = 'answer-review-input';
-        answerInput.setAttribute('aria-label', 'Type the correct answer');
-        answerInput.setAttribute('autocomplete', 'off');
-        answerInput.setAttribute('autocapitalize', 'off');
-        answerInput.setAttribute('autocorrect', 'off');
-        answerInput.setAttribute('spellcheck', 'false');
-        answerInput.addEventListener('input', () => {
-            if (!this.currentQuestion) {
-                return;
-            }
+        const feedback = this.createParagraph('feedback answer-review-answer', `Incorrect — correct answer: ${question.correctAnswer}`);
+        const instruction = this.createParagraph(
+            'meta-line answer-review-prompt',
+            this.mobile ? 'Tap the correct answer to continue.' : 'Type the correct answer to continue.',
+        );
+        const correctionControl = this.mobile
+            ? this.createAnswerNumberPad(question, () => this.showQuestion(action))
+            : this.createAnswerInput(question, 'answer-review-input', () => this.showQuestion(action));
 
-            if (!this.isCorrectAnswer(answerInput.value)) {
-                return;
-            }
-
-            this.showQuestion(action);
-        });
-
-        this.buildMenu.append(header, questionText, feedback, instruction, answerInput);
+        this.buildMenu.append(header, questionText, feedback, instruction, correctionControl);
         this.buildMenu.hidden = false;
+        this.buildMenu.classList.add('is-answer-popup');
         this.buildMenu.classList.add('is-open');
         this.positionBuildMenu(this.popupAnchor);
-        answerInput.focus();
+        if (!this.mobile) {
+            correctionControl.focus();
+        }
     }
 
     private showMessagePopup(kicker: string, titleText: string, detail: string, message: string): void {
@@ -306,6 +361,9 @@ export class BottomPanel {
             button.addEventListener('click', () => this.setSelectedBuildDifficulty(selection));
             row.append(button);
         });
+        if (this.extraSelectorControls.length > 0) {
+            row.prepend(...this.extraSelectorControls);
+        }
         this.body.append(row);
     }
 
@@ -351,7 +409,12 @@ export class BottomPanel {
         return row;
     }
 
-    private createAnswerInput(question: MathsQuestion, testId: string): HTMLInputElement {
+    private createAnswerInput(
+        question: MathsQuestion,
+        testId: string,
+        onAccept: (answer: string) => void,
+        onReject?: (answer: string) => void,
+    ): HTMLInputElement {
         const answerInput = document.createElement('input');
         answerInput.type = 'text';
         answerInput.inputMode = 'numeric';
@@ -368,14 +431,91 @@ export class BottomPanel {
             }
 
             event.preventDefault();
-            this.answer(answerInput.value);
+            if (!this.isCorrectAnswer(answerInput.value) && onReject) {
+                onReject(answerInput.value);
+            }
         });
         answerInput.addEventListener('input', () => {
             if (this.normalizeAnswerInput(answerInput.value) === this.normalizeAnswerInput(question.correctAnswer)) {
-                this.answer(answerInput.value);
+                onAccept(answerInput.value);
             }
         });
         return answerInput;
+    }
+
+    private createAnswerNumberPad(
+        question: MathsQuestion,
+        onSubmit: (answer: string) => void,
+    ): HTMLDivElement {
+        const numberPad = this.createDiv('answer-number-pad');
+        numberPad.dataset.testid = 'answer-number-pad';
+
+        const display = this.createDiv('answer-number-pad-display is-empty');
+        display.dataset.testid = 'answer-number-pad-display';
+        display.setAttribute('role', 'textbox');
+        display.setAttribute('aria-label', 'Entered answer');
+        display.setAttribute('aria-readonly', 'true');
+        display.setAttribute('aria-live', 'polite');
+        display.textContent = '—';
+
+        const keys = this.createDiv('answer-number-pad-keys');
+        let value = '';
+        const updateValue = (nextValue: string): void => {
+            value = nextValue;
+            display.textContent = value || '—';
+            display.classList.toggle('is-empty', value.length === 0);
+            if (value && this.isCorrectAnswer(value)) {
+                onSubmit(value);
+            }
+        };
+
+        const numberPadKeys = getAnswerNumberPadKeys(question.correctAnswer);
+        numberPadKeys.forEach((key) => {
+            if (key === 'spacer') {
+                const spacer = this.createDiv('answer-number-key-spacer');
+                spacer.setAttribute('aria-hidden', 'true');
+                keys.append(spacer);
+                return;
+            }
+            const isBackspace = key === 'backspace';
+            const button = this.createButton(
+                `answer-number-key${isBackspace ? ' answer-number-key-backspace' : ''}`,
+                isBackspace ? '⌫' : key,
+                'answer-number-key',
+            );
+            button.dataset.key = key;
+            button.setAttribute(
+                'aria-label',
+                isBackspace
+                    ? 'Delete last character'
+                    : key === '.'
+                        ? 'Decimal point'
+                        : key === '/'
+                            ? 'Fraction slash'
+                            : /^[0-9]$/.test(key) ? `Digit ${key}` : key,
+            );
+            button.addEventListener('click', () => {
+                if (isBackspace) {
+                    updateValue(value.slice(0, -1));
+                    return;
+                }
+                if (!/^[0-9]$/.test(key) && value.includes(key)) {
+                    return;
+                }
+                if (value.length >= MAX_NUMBER_PAD_LENGTH) {
+                    return;
+                }
+                if (key === '.' && !value) {
+                    updateValue(value ? `${value}.` : '0.');
+                    return;
+                }
+                updateValue(value === '0' && /^[0-9]$/.test(key) ? key : `${value}${key}`);
+            });
+            keys.append(button);
+        });
+
+        numberPad.append(display, keys);
+        return numberPad;
     }
 
     private positionBuildMenu(anchor: Vec2): void {

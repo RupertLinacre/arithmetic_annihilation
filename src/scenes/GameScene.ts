@@ -1,12 +1,22 @@
 import Phaser from 'phaser';
 import { ENEMY_STATS, GAME_CONFIG, TOWER_COLORS } from '../config/gameConfig';
 import { SeededRandom } from '../core/SeededRandom';
-import { createTower, isWallTower, upgradeTower } from '../entities/Tower';
-import { updateEnemy } from '../entities/Enemy';
+import { canUpgradeTower, createTower, isWallTower, upgradeTower } from '../entities/Tower';
+import { createEnemy, updateEnemy } from '../entities/Enemy';
 import { isBaseFootprintCell } from '../map/BaseFootprint';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 import { hasLineOfSight } from '../map/LineOfSight';
-import { generateMap, type GeneratedMap } from '../map/MapGenerator';
+import { generateMap, generateMultiplayerMap, type GeneratedMap } from '../map/MapGenerator';
+import { multiplayerSession } from '../multiplayer/MultiplayerSession';
+import {
+    chooseMonsterType,
+    getGeneratorDamageScale,
+    getGeneratorHealthScale,
+    getGeneratorSpawnPeriodMs,
+    getGeneratorUpgradeDifficulty,
+    getMonsterMix,
+    MAX_MONSTER_GENERATOR_LEVEL,
+} from '../multiplayer/MonsterGenerator';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
 import { calculateTowerThreatCosts, createEmptyCostGrid, type CostGrid, getTowerStats } from '../pathfinding/ThreatMap';
 import { EnemySpawner, isGameDifficulty, type GameDifficulty } from '../systems/EnemySpawner';
@@ -20,9 +30,26 @@ import {
     type BaseMathsDifficulty,
     MathsQuestionSystem,
 } from '../systems/MathsQuestionSystem';
-import { BottomPanel, type BuildTowerSelection } from '../ui/BottomPanel';
+import { BottomPanel, type BuildTowerSelection, type MobileAnswerMode } from '../ui/BottomPanel';
 import { isMobileLayout, MobileLayout } from '../ui/mobile';
-import type { EnemyState, GridPoint, ProjectileState, TerrainType, TowerState, TowerType, Vec2 } from '../types';
+import type {
+    EnemyState,
+    GridPoint,
+    MonsterGeneratorState,
+    MonsterGeneratorTrack,
+    MonsterGeneratorType,
+    MultiplayerCommand,
+    MultiplayerSnapshot,
+    MultiplayerStats,
+    ProjectileState,
+    ScheduledMultiplayerCommand,
+    TeamId,
+    TerrainType,
+    TowerState,
+    TowerDifficulty,
+    TowerType,
+    Vec2,
+} from '../types';
 
 const SPRITE_PATHS = {
     base: 'sprites/base_1.png',
@@ -97,14 +124,21 @@ const ENEMY_SPRITE_MIN_SIZE = GAME_CONFIG.map.cellSize * 0.9;
 const ENEMY_SPRITE_MAX_SIZE = GAME_CONFIG.map.cellSize * 1.28;
 const AIRSTRIKE_DELAY_MS = 500;
 const AIRSTRIKE_IMPACT_LIFE_MS = 640;
+const MULTIPLAYER_STEP_MS = 40;
+const MULTIPLAYER_COMMAND_DELAY_TICKS = 12;
+const MULTIPLAYER_CHECKSUM_INTERVAL_TICKS = 50;
+const COMPUTER_ACTION_INTERVAL_TICKS = 225;
+const COMPUTER_TOWER_TYPES: TowerType[] = ['easy', 'spray', 'missile', 'flamethrower', 'cluster', 'wall'];
 const LEGACY_DIFFICULTY_STORAGE_KEY = 'vocab-annihilation:difficulty';
 const SPAWN_RATE_STORAGE_KEY = 'arithmetic-annihilation:spawn-rate';
 const BASE_DIFFICULTY_STORAGE_KEY = 'arithmetic-annihilation:base-difficulty';
+const ANSWER_MODE_STORAGE_KEY = 'arithmetic-annihilation:answer-mode';
 const MUSIC_VOLUME_STORAGE_KEY = 'arithmetic-annihilation:music-volume';
 const MUSIC_MUTED_STORAGE_KEY = 'arithmetic-annihilation:music-muted';
 const URL_OPTION_KEYS = {
     spawnRate: 'spawn-rate',
     baseDifficulty: 'base-difficulty',
+    answerMode: 'answer-mode',
     musicVolume: 'music-volume',
     musicMuted: 'music-muted',
 } as const;
@@ -117,8 +151,17 @@ const SPAWN_RATE_LABELS: Record<GameDifficulty, string> = {
     veryHard: 'Very high',
 };
 
+const ANSWER_MODE_LABELS: Record<MobileAnswerMode, string> = {
+    'multiple-choice': 'multiple choice',
+    'type-answer': 'type the answer',
+};
+
 function isBaseMathsDifficulty(value: string): value is BaseMathsDifficulty {
     return normalizeBaseMathsDifficulty(value) === value;
+}
+
+function isMobileAnswerMode(value: string): value is MobileAnswerMode {
+    return value === 'multiple-choice' || value === 'type-answer';
 }
 
 type EnemyTextureTier = keyof typeof ENEMY_TEXTURES;
@@ -151,6 +194,41 @@ interface PendingAirstrike {
     delayMs: number;
     start: Vec2;
     end: Vec2;
+    teamId?: TeamId;
+}
+
+const TEAMS: TeamId[] = ['solar', 'lunar'];
+const GENERATOR_TRACKS: MonsterGeneratorTrack[] = ['nibble', 'advanced'];
+const MONSTER_CONFIG: Record<MonsterGeneratorType, {
+    label: string;
+    enemyType: EnemyState['type'];
+    sprite: string;
+    visualTier: 1 | 2 | 3 | 4;
+}> = {
+    scout: { label: 'Nibble', enemyType: 'scout', sprite: SPRITE_PATHS.monster1Run, visualTier: 1 },
+    grunt: { label: 'Zapper', enemyType: 'grunt', sprite: SPRITE_PATHS.monster2Run, visualTier: 2 },
+    tank: { label: 'Chomper', enemyType: 'tank', sprite: SPRITE_PATHS.monster3Run, visualTier: 3 },
+    titan: { label: 'Mega Moo', enemyType: 'tank', sprite: SPRITE_PATHS.monster4Run, visualTier: 4 },
+};
+
+function opponentOf(teamId: TeamId): TeamId {
+    return teamId === 'solar' ? 'lunar' : 'solar';
+}
+
+function checksumHash(value: string): string {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+function stableNumber(value: number): number {
+    if (!Number.isFinite(value)) {
+        return 1_000_000_000;
+    }
+    return Math.round(value * 10_000) / 10_000;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -161,6 +239,7 @@ export class GameScene extends Phaser.Scene {
     private graphics!: Phaser.GameObjects.Graphics;
     private debugGraphics!: Phaser.GameObjects.Graphics;
     private towerSprites = new Map<number, Phaser.GameObjects.Image>();
+    private terrainSprites: Phaser.GameObjects.Image[] = [];
     private enemyShadows = new Map<number, Phaser.GameObjects.Image>();
     private enemySprites = new Map<number, Phaser.GameObjects.Image>();
     private costTexts: Phaser.GameObjects.Text[] = [];
@@ -172,6 +251,7 @@ export class GameScene extends Phaser.Scene {
     private projectileSystem = new ProjectileSystem();
     private effects = new EffectsSystem();
     private baseSprite!: Phaser.GameObjects.Image;
+    private baseSprites = new Map<TeamId, Phaser.GameObjects.Image>();
     private towers: TowerState[] = [];
     private enemies: EnemyState[] = [];
     private projectiles: ProjectileState[] = [];
@@ -179,9 +259,35 @@ export class GameScene extends Phaser.Scene {
     private airstrikeImpacts: AirstrikeImpactVisual[] = [];
     private pendingAirstrikes: PendingAirstrike[] = [];
     private baseHealth = GAME_CONFIG.baseHealth;
+    private baseHealthByTeam: Record<TeamId, number> = { solar: GAME_CONFIG.baseHealth, lunar: GAME_CONFIG.baseHealth };
+    private statsByTeam: Record<TeamId, MultiplayerStats> = {
+        solar: { kills: 0, answered: 0, correctAnswers: 0 },
+        lunar: { kills: 0, answered: 0, correctAnswers: 0 },
+    };
+    private generators: MonsterGeneratorState[] = [];
+    private multiplayerSpawnRng!: SeededRandom;
+    private nextMultiplayerEnemyId = 1_000_000;
+    private multiplayerTick = 0;
+    private multiplayerAccumulatorMs = 0;
+    private multiplayerCommandSequence = 1;
+    private pendingMultiplayerCommands: ScheduledMultiplayerCommand[] = [];
+    private multiplayerChecksums = new Map<number, string>();
+    private pendingRemoteChecksums = new Map<number, string>();
+    private lastResyncRequestedTick = -1;
+    private multiplayerResyncCount = 0;
+    private nextComputerActionTick = 0;
+    private computerActionIndex = 0;
+    private computerBuildCursor = 0;
+    private opponentTextureKeys = new Map<string, string>();
+    private isMultiplayer = false;
+    private localTeamId: TeamId = 'solar';
+    private flowFields?: Record<TeamId, FlowField>;
+    private emergencyFlowFields?: Record<TeamId, FlowField>;
+    private threatCostsByTeam?: Record<TeamId, CostGrid>;
     private baseDamageFlashMs = 0;
     private spawnRate: GameDifficulty = 'medium';
     private baseDifficulty: BaseMathsDifficulty = 'year3';
+    private mobileAnswerMode: MobileAnswerMode = 'multiple-choice';
     private elapsedMs = 0;
     private kills = 0;
     private answered = 0;
@@ -216,36 +322,51 @@ export class GameScene extends Phaser.Scene {
 
     create(): void {
         const seedParam = new URLSearchParams(window.location.search).get('seed');
-        const seed = seedParam ? SeededRandom.hash(seedParam) : Date.now() % 1000000000;
+        this.isMultiplayer = multiplayerSession.isMultiplayer;
+        this.localTeamId = multiplayerSession.localTeamId;
+        const seed = this.isMultiplayer
+            ? multiplayerSession.seed
+            : seedParam ? SeededRandom.hash(seedParam) : Date.now() % 1000000000;
         this.spawnRate = this.readSavedSpawnRate();
         this.baseDifficulty = this.readSavedBaseDifficulty();
+        this.mobileAnswerMode = this.readSavedMobileAnswerMode();
         this.musicVolume = this.readSavedMusicVolume();
         this.musicMuted = this.readSavedMusicMuted();
         this.syncUrlOptions();
         this.backgroundMusic = this.createBackgroundMusic();
-        this.generatedMap = generateMap(seed);
+        this.generatedMap = this.isMultiplayer ? generateMultiplayerMap(seed) : generateMap(seed);
         this.rebuildFlowField();
         this.graphics = this.add.graphics().setDepth(3);
         this.debugGraphics = this.add.graphics().setDepth(5);
+        this.createOpponentTextureVariants();
         this.createMapSprites();
         this.spawner = new EnemySpawner(this.generatedMap.spawns, GAME_CONFIG.map, new SeededRandom(`${seed}:spawns`));
+        this.multiplayerSpawnRng = new SeededRandom(`${seed}:multiplayer-spawns`);
+        this.generators = TEAMS.flatMap((teamId) => GENERATOR_TRACKS.map((track) => ({
+            teamId,
+            track,
+            level: 0,
+            progress: 0,
+            spawnCount: 0,
+        })));
         this.mathsSystem = new MathsQuestionSystem(new SeededRandom(`${seed}:maths`), this.baseDifficulty);
         if (isMobileLayout()) {
             this.mobileLayout = new MobileLayout();
         }
         this.panel = new BottomPanel(this.mathsSystem, {
-            onBuild: (cell, difficulty) => this.buildTower(cell, difficulty),
-            onUpgrade: (tower) => this.upgradeExistingTower(tower),
-            onAnswered: (correct) => this.recordAnswer(correct),
+            onBuild: (cell, towerType) => this.requestCommand({ kind: 'build', teamId: this.localTeamId, cell, towerType }),
+            onUpgrade: (tower) => this.requestCommand({ kind: 'upgrade', teamId: this.localTeamId, towerId: tower.id }),
+            onAnswered: (correct, difficulty) => this.recordAnswer(correct, difficulty),
             onQuestionStateChange: (isActive) => this.setQuestionPause(isActive),
             onClose: () => this.clearSelection(),
-        }, this.mobileLayout ? { infoHost: this.mobileLayout.getInfoHost() } : undefined);
+        }, this.mobileLayout ? { infoHost: this.mobileLayout.getInfoHost(), answerMode: this.mobileAnswerMode } : undefined, this.isMultiplayer);
         this.setupMusicControls();
         this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handlePointerDown(pointer));
         this.registerDebugKeys();
         this.setupSettingsControls();
         this.setupPauseControls();
         this.setupGameOverControls();
+        this.setupMultiplayerControls();
         this.installBrowserHooks();
         this.applyMobileCamera();
         this.updateHud();
@@ -254,13 +375,35 @@ export class GameScene extends Phaser.Scene {
     }
 
     update(_time: number, deltaMs: number): void {
-        if (this.gameOver || this.isPaused) {
+        if (this.gameOver) {
             this.render();
             return;
         }
-        this.elapsedMs += deltaMs;
+
+        if (this.isMultiplayer) {
+            this.multiplayerAccumulatorMs += Math.min(deltaMs, 2_000);
+            while (this.multiplayerAccumulatorMs >= MULTIPLAYER_STEP_MS && !this.gameOver) {
+                this.multiplayerTick += 1;
+                this.updateComputerOpponent();
+                this.applyDueMultiplayerCommands();
+                this.advanceSimulation(MULTIPLAYER_STEP_MS);
+                this.multiplayerAccumulatorMs -= MULTIPLAYER_STEP_MS;
+                this.recordMultiplayerChecksum();
+            }
+        } else if (!this.isPaused) {
+            this.advanceSimulation(deltaMs);
+        }
+
+        this.updateHud();
+        this.render();
+    }
+
+    private advanceSimulation(deltaMs: number): void {
+        this.elapsedMs = this.isMultiplayer ? this.multiplayerTick * MULTIPLAYER_STEP_MS : this.elapsedMs + deltaMs;
         this.baseDamageFlashMs = Math.max(0, this.baseDamageFlashMs - deltaMs);
-        if (this.spawningUnlocked) {
+        if (this.isMultiplayer) {
+            this.updateMonsterGenerators(deltaMs);
+        } else if (this.spawningUnlocked) {
             this.enemies.push(...this.spawner.update(deltaMs, this.towers, {
                 difficulty: this.spawnRate,
                 baseHealthPercent: this.baseHealth / GAME_CONFIG.baseHealth,
@@ -277,7 +420,11 @@ export class GameScene extends Phaser.Scene {
         let baseDamageTaken = 0;
         let wallDestroyed = false;
         for (const enemy of this.enemies) {
-            const wallAttack = updateEnemyWallObjective(enemy, deltaMs / 1000, this.towers, this.flowField, this.generatedMap.grid, GAME_CONFIG.map, this.enemies, this.threatCosts);
+            const targetTeam = this.isMultiplayer ? opponentOf(enemy.teamId ?? 'solar') : 'lunar';
+            const flowField = this.isMultiplayer ? this.flowFields![targetTeam] : this.flowField;
+            const emergencyFlowField = this.isMultiplayer ? this.emergencyFlowFields![targetTeam] : this.emergencyFlowField;
+            const threatCosts = this.isMultiplayer ? this.threatCostsByTeam![targetTeam] : this.threatCosts;
+            const wallAttack = updateEnemyWallObjective(enemy, deltaMs / 1000, this.towers, flowField, this.generatedMap.grid, GAME_CONFIG.map, this.enemies, threatCosts);
             if (wallAttack.targetedWall) {
                 if (wallAttack.destroyedWall) {
                     this.destroyTower(wallAttack.destroyedWall);
@@ -288,11 +435,17 @@ export class GameScene extends Phaser.Scene {
                 }
                 continue;
             }
-            const reachedBase = updateEnemy(enemy, deltaMs / 1000, this.flowField, this.emergencyFlowField, this.generatedMap.grid, GAME_CONFIG.map, this.enemies);
+            const reachedBase = updateEnemy(enemy, deltaMs / 1000, flowField, emergencyFlowField, this.generatedMap.grid, GAME_CONFIG.map, this.enemies);
             if (reachedBase) {
-                const previousHealth = this.baseHealth;
-                this.baseHealth = Math.max(0, this.baseHealth - enemy.baseDamage);
-                baseDamageTaken += previousHealth - this.baseHealth;
+                if (this.isMultiplayer) {
+                    const previousHealth = this.baseHealthByTeam[targetTeam];
+                    this.baseHealthByTeam[targetTeam] = Math.max(0, previousHealth - enemy.baseDamage);
+                    baseDamageTaken += previousHealth - this.baseHealthByTeam[targetTeam];
+                } else {
+                    const previousHealth = this.baseHealth;
+                    this.baseHealth = Math.max(0, this.baseHealth - enemy.baseDamage);
+                    baseDamageTaken += previousHealth - this.baseHealth;
+                }
             } else if (enemy.health > 0) {
                 enemySurvivors.push(enemy);
             }
@@ -305,7 +458,14 @@ export class GameScene extends Phaser.Scene {
             this.flashBaseDamage();
         }
 
-        const towerResult = this.towerSystem.update(deltaMs, this.towers, this.enemies, this.generatedMap.grid, GAME_CONFIG.map, this.flowField);
+        const towerResult = this.towerSystem.update(
+            deltaMs,
+            this.towers,
+            this.enemies,
+            this.generatedMap.grid,
+            GAME_CONFIG.map,
+            this.isMultiplayer ? (tower) => this.flowFields![tower.teamId ?? 'lunar'] : this.flowField,
+        );
         this.projectiles.push(...towerResult.projectiles);
         this.kills += towerResult.kills;
         this.explosions.push(...towerResult.explosions);
@@ -349,11 +509,11 @@ export class GameScene extends Phaser.Scene {
             .map((impact) => ({ ...impact, lifeMs: impact.lifeMs - deltaMs }))
             .filter((impact) => impact.lifeMs > 0);
 
-        if (this.baseHealth <= 0) {
+        if (this.isMultiplayer && TEAMS.some((teamId) => this.baseHealthByTeam[teamId] <= 0)) {
+            this.endGame();
+        } else if (!this.isMultiplayer && this.baseHealth <= 0) {
             this.endGame();
         }
-        this.updateHud();
-        this.render();
     }
 
     private handlePointerDown(pointer: Phaser.Input.Pointer): void {
@@ -372,7 +532,7 @@ export class GameScene extends Phaser.Scene {
         const wantsAirstrike = this.panel.getSelectedBuildTower() === 'airstrike';
         this.selectedCell = cell;
         this.selectedTower = tower;
-        if (tower && !wantsAirstrike) {
+        if (tower && (!this.isMultiplayer || tower.teamId === this.localTeamId) && !wantsAirstrike) {
             this.panel.openUpgrade(tower, pointerPosition);
         } else if (wantsAirstrike || this.canBuildOnCell(cell)) {
             this.panel.openBuild(cell, pointerPosition);
@@ -382,17 +542,17 @@ export class GameScene extends Phaser.Scene {
         this.render();
     }
 
-    private buildTower(cell: GridPoint, towerType: TowerType): void {
+    private buildTower(cell: GridPoint, towerType: TowerType, teamId = this.localTeamId): void {
         if (towerType === 'airstrike') {
-            this.scheduleAirstrike(cell);
+            this.scheduleAirstrike(cell, teamId);
             this.spawningUnlocked = true;
             this.syncStatusMessage();
             return;
         }
-        if (!this.canBuildOnCell(cell) || this.findTowerAt(cell.x, cell.y)) {
+        if (!this.canBuildOnCell(cell, teamId) || this.findTowerAt(cell.x, cell.y)) {
             return;
         }
-        const tower = createTower(this.nextTowerId++, cell.x, cell.y, towerType);
+        const tower = createTower(this.nextTowerId++, cell.x, cell.y, towerType, this.isMultiplayer ? teamId : undefined);
         if (isWallTower(tower)) {
             tower.baseTerrain = this.generatedMap.grid.getTerrain(cell.x, cell.y);
             this.generatedMap.grid.setTerrain(cell.x, cell.y, 'tree');
@@ -403,7 +563,7 @@ export class GameScene extends Phaser.Scene {
         this.syncStatusMessage();
     }
 
-    private scheduleAirstrike(cell: GridPoint): void {
+    private scheduleAirstrike(cell: GridPoint, teamId?: TeamId): void {
         if (!this.generatedMap.grid.inBounds(cell.x, cell.y)) {
             return;
         }
@@ -416,6 +576,7 @@ export class GameScene extends Phaser.Scene {
             delayMs: AIRSTRIKE_DELAY_MS,
             start: { x: center.x - cellSize * 7, y: center.y - cellSize * 4 },
             end: { x: center.x + cellSize * 0.25, y: center.y - cellSize * 0.15 },
+            teamId,
         });
     }
 
@@ -432,7 +593,7 @@ export class GameScene extends Phaser.Scene {
                 continue;
             }
 
-            const result = this.towerSystem.detonateAirstrike(airstrike.target, this.enemies, this.generatedMap.grid, GAME_CONFIG.map);
+            const result = this.towerSystem.detonateAirstrike(airstrike.target, this.enemies, this.generatedMap.grid, GAME_CONFIG.map, airstrike.teamId);
             this.kills += result.kills;
             this.explosions.push(result.explosion);
             this.effects.spawnExplosion(result.explosion.x, result.explosion.y, result.explosion.radius, true);
@@ -453,12 +614,19 @@ export class GameScene extends Phaser.Scene {
         return ((airstrikeId + 1) * 73856093) ^ ((impact.x + 1) * 19349663) ^ ((impact.y + 1) * 83492791);
     }
 
-    private canBuildOnCell(cell: GridPoint): boolean {
-        return this.generatedMap.grid.isBuildable(cell.x, cell.y)
-            && !isBaseFootprintCell(this.generatedMap.base, cell, this.generatedMap.grid);
+    private canBuildOnCell(cell: GridPoint, teamId = this.localTeamId): boolean {
+        const onOwnHalf = !this.isMultiplayer
+            || (teamId === 'solar' ? cell.x < this.generatedMap.grid.cols / 2 : cell.x >= this.generatedMap.grid.cols / 2);
+        const outsideBases = this.isMultiplayer
+            ? TEAMS.every((candidate) => !isBaseFootprintCell(this.generatedMap.bases![candidate], cell, this.generatedMap.grid))
+            : !isBaseFootprintCell(this.generatedMap.base, cell, this.generatedMap.grid);
+        return onOwnHalf && outsideBases && this.generatedMap.grid.isBuildable(cell.x, cell.y);
     }
 
-    private upgradeExistingTower(tower: TowerState): void {
+    private upgradeExistingTower(tower: TowerState, teamId = this.localTeamId): void {
+        if (this.isMultiplayer && tower.teamId !== teamId) {
+            return;
+        }
         if (upgradeTower(tower)) {
             this.rebuildFlowField();
         }
@@ -478,12 +646,509 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
-    private recordAnswer(correct: boolean): void {
-        this.answered += 1;
-        if (correct) {
-            this.correctAnswers += 1;
+    private recordAnswer(correct: boolean, difficulty: TowerDifficulty): void {
+        if (this.isMultiplayer) {
+            const value = difficulty === 'medium' ? 2 : 1;
+            this.requestCommand({ kind: 'answer', teamId: this.localTeamId, correct, value });
+        } else {
+            this.answered += 1;
+            if (correct) {
+                this.correctAnswers += 1;
+            }
         }
         this.updateHud();
+    }
+
+    private requestCommand(command: MultiplayerCommand): void {
+        if (this.isMultiplayer) {
+            multiplayerSession.sendAction(command);
+            return;
+        }
+        if (command.kind === 'build') {
+            this.buildTower(command.cell, command.towerType);
+        } else if (command.kind === 'upgrade') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) {
+                this.upgradeExistingTower(tower);
+            }
+        }
+    }
+
+    private applyMultiplayerCommand(command: MultiplayerCommand): void {
+        if (!this.isMultiplayer || this.gameOver) {
+            return;
+        }
+        if (command.kind === 'build') {
+            this.buildTower(command.cell, command.towerType, command.teamId);
+            return;
+        }
+        if (command.kind === 'upgrade') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) {
+                this.upgradeExistingTower(tower, command.teamId);
+            }
+            return;
+        }
+        if (command.kind === 'upgradeGenerator') {
+            const generator = this.generators.find((candidate) => candidate.teamId === command.teamId && candidate.track === command.track);
+            if (generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
+                const wasOff = generator.level === 0;
+                generator.level += 1;
+                if (wasOff) {
+                    this.spawnMultiplayerEnemy(generator);
+                }
+                this.renderMonsterGeneratorControls();
+            }
+            return;
+        }
+        const stats = this.statsByTeam[command.teamId];
+        stats.answered += 1;
+        if (command.correct) {
+            stats.correctAnswers += 1;
+        } else {
+            const rivalGenerator = this.generators.find((candidate) => candidate.teamId === opponentOf(command.teamId) && candidate.track === 'nibble');
+            if (rivalGenerator) {
+                rivalGenerator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, rivalGenerator.level + command.value);
+            }
+        }
+    }
+
+    private scheduleMultiplayerCommand(command: MultiplayerCommand): void {
+        if (multiplayerSession.role !== 'host' || this.gameOver) {
+            return;
+        }
+        const scheduled: ScheduledMultiplayerCommand = {
+            id: `${this.multiplayerTick.toString(36)}-${(this.multiplayerCommandSequence++).toString(36)}`,
+            tick: this.multiplayerTick + MULTIPLAYER_COMMAND_DELAY_TICKS,
+            command,
+        };
+        if (this.queueMultiplayerCommand(scheduled)) {
+            multiplayerSession.broadcastCommand(scheduled);
+        }
+    }
+
+    private initializeComputerOpponent(): void {
+        if (!multiplayerSession.isComputerOpponent) {
+            return;
+        }
+        this.scheduleMultiplayerCommand({ kind: 'upgradeGenerator', teamId: 'lunar', track: 'nibble' });
+        const firstCell = this.findComputerBuildCell();
+        if (firstCell) {
+            this.scheduleMultiplayerCommand({ kind: 'build', teamId: 'lunar', cell: firstCell, towerType: 'easy' });
+        }
+        this.nextComputerActionTick = this.multiplayerTick + COMPUTER_ACTION_INTERVAL_TICKS;
+    }
+
+    private updateComputerOpponent(): void {
+        if (!multiplayerSession.isComputerOpponent || this.multiplayerTick < this.nextComputerActionTick) {
+            return;
+        }
+        this.nextComputerActionTick += COMPUTER_ACTION_INTERVAL_TICKS;
+        this.computerActionIndex += 1;
+
+        if (this.computerActionIndex % 3 === 1) {
+            const track: MonsterGeneratorTrack = this.computerActionIndex % 6 === 1 ? 'advanced' : 'nibble';
+            const generator = this.generators.find((candidate) => candidate.teamId === 'lunar' && candidate.track === track);
+            if (generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
+                this.scheduleMultiplayerCommand({ kind: 'upgradeGenerator', teamId: 'lunar', track });
+                return;
+            }
+        }
+
+        const buildCell = this.findComputerBuildCell();
+        const computerTowers = this.towers.filter((tower) => tower.teamId === 'lunar');
+        if (buildCell && computerTowers.length < 10) {
+            const towerType = COMPUTER_TOWER_TYPES[this.computerActionIndex % COMPUTER_TOWER_TYPES.length];
+            this.scheduleMultiplayerCommand({ kind: 'build', teamId: 'lunar', cell: buildCell, towerType });
+            return;
+        }
+
+        const upgrade = computerTowers
+            .filter((tower) => canUpgradeTower(tower))
+            .sort((a, b) => a.level - b.level || a.id - b.id)[0];
+        if (upgrade) {
+            this.scheduleMultiplayerCommand({ kind: 'upgrade', teamId: 'lunar', towerId: upgrade.id });
+        }
+    }
+
+    private findComputerBuildCell(): GridPoint | undefined {
+        const candidates: GridPoint[] = [];
+        const { cols, rows } = this.generatedMap.grid;
+        for (let x = cols - 3; x >= cols / 2; x -= 1) {
+            for (let y = 2; y < rows - 2; y += 1) {
+                const cell = { x, y };
+                if (this.canBuildOnCell(cell, 'lunar') && !this.findTowerAt(x, y)) {
+                    candidates.push(cell);
+                }
+            }
+        }
+        if (candidates.length === 0) {
+            return undefined;
+        }
+        const cell = candidates[this.computerBuildCursor % candidates.length];
+        this.computerBuildCursor += 1;
+        return { ...cell };
+    }
+
+    private queueMultiplayerCommand(scheduled: ScheduledMultiplayerCommand): boolean {
+        if (this.pendingMultiplayerCommands.some((candidate) => candidate.id === scheduled.id)) {
+            return false;
+        }
+        if (scheduled.tick <= this.multiplayerTick) {
+            if (multiplayerSession.role === 'guest') {
+                this.requestMultiplayerResync(scheduled.tick);
+            }
+            return false;
+        }
+        this.pendingMultiplayerCommands.push({
+            ...scheduled,
+            command: { ...scheduled.command },
+        });
+        this.pendingMultiplayerCommands.sort((a, b) => a.tick - b.tick || a.id.localeCompare(b.id));
+        return true;
+    }
+
+    private applyDueMultiplayerCommands(): void {
+        let dueCount = 0;
+        while (dueCount < this.pendingMultiplayerCommands.length && this.pendingMultiplayerCommands[dueCount].tick <= this.multiplayerTick) {
+            this.applyMultiplayerCommand(this.pendingMultiplayerCommands[dueCount].command);
+            dueCount += 1;
+        }
+        if (dueCount > 0) {
+            this.pendingMultiplayerCommands.splice(0, dueCount);
+        }
+    }
+
+    private createMultiplayerChecksum(): string {
+        const state = {
+            tick: this.multiplayerTick,
+            health: this.baseHealthByTeam,
+            towers: this.towers.map((tower) => ({
+                id: tower.id,
+                type: tower.type,
+                teamId: tower.teamId,
+                x: tower.gridX,
+                y: tower.gridY,
+                level: tower.level,
+                cooldownMs: stableNumber(tower.cooldownMs),
+            })),
+            enemies: this.enemies.map((enemy) => ({
+                id: enemy.id,
+                type: enemy.type,
+                teamId: enemy.teamId,
+                x: stableNumber(enemy.x),
+                y: stableNumber(enemy.y),
+                vx: stableNumber(enemy.vx),
+                vy: stableNumber(enemy.vy),
+                health: stableNumber(enemy.health),
+                burnMs: stableNumber(enemy.burnMs ?? 0),
+            })),
+            projectiles: this.projectiles.map((projectile) => ({
+                id: projectile.id,
+                type: projectile.type,
+                teamId: projectile.teamId,
+                x: stableNumber(projectile.x),
+                y: stableNumber(projectile.y),
+                vx: stableNumber(projectile.vx),
+                vy: stableNumber(projectile.vy),
+                lifeMs: stableNumber(projectile.lifeMs),
+            })),
+            generators: this.generators.map((generator) => ({
+                ...generator,
+                progress: stableNumber(generator.progress),
+            })),
+            pendingCommands: this.pendingMultiplayerCommands,
+            pendingAirstrikes: this.pendingAirstrikes.map((airstrike) => ({
+                id: airstrike.id,
+                elapsedMs: stableNumber(airstrike.elapsedMs),
+                target: airstrike.target,
+                teamId: airstrike.teamId,
+            })),
+            rngState: this.multiplayerSpawnRng.getState(),
+            nextIds: {
+                tower: this.nextTowerId,
+                airstrike: this.nextAirstrikeId,
+                enemy: this.nextMultiplayerEnemyId,
+                towerProjectile: this.towerSystem.getNextProjectileId(),
+                fragmentProjectile: this.projectileSystem.getNextProjectileId(),
+            },
+        };
+        return checksumHash(JSON.stringify(state));
+    }
+
+    private recordMultiplayerChecksum(): void {
+        if (this.multiplayerTick % MULTIPLAYER_CHECKSUM_INTERVAL_TICKS !== 0) {
+            return;
+        }
+        const checksum = this.createMultiplayerChecksum();
+        this.multiplayerChecksums.set(this.multiplayerTick, checksum);
+        for (const tick of this.multiplayerChecksums.keys()) {
+            if (tick < this.multiplayerTick - MULTIPLAYER_CHECKSUM_INTERVAL_TICKS * 4) {
+                this.multiplayerChecksums.delete(tick);
+            }
+        }
+        if (multiplayerSession.role === 'host') {
+            multiplayerSession.sendChecksum(this.multiplayerTick, checksum);
+        }
+        this.comparePendingMultiplayerChecksums();
+    }
+
+    private receiveMultiplayerChecksum(tick: number, checksum: string): void {
+        this.pendingRemoteChecksums.set(tick, checksum);
+        this.comparePendingMultiplayerChecksums();
+    }
+
+    private comparePendingMultiplayerChecksums(): void {
+        for (const [tick, remoteChecksum] of this.pendingRemoteChecksums) {
+            const localChecksum = this.multiplayerChecksums.get(tick);
+            if (!localChecksum) {
+                if (tick < this.multiplayerTick - MULTIPLAYER_CHECKSUM_INTERVAL_TICKS) {
+                    this.requestMultiplayerResync(tick);
+                    this.pendingRemoteChecksums.delete(tick);
+                }
+                continue;
+            }
+            this.pendingRemoteChecksums.delete(tick);
+            if (localChecksum !== remoteChecksum) {
+                this.requestMultiplayerResync(tick);
+            }
+        }
+    }
+
+    private requestMultiplayerResync(tick: number): void {
+        if (multiplayerSession.role !== 'guest' || tick <= this.lastResyncRequestedTick) {
+            return;
+        }
+        this.lastResyncRequestedTick = tick;
+        multiplayerSession.requestResync(tick);
+    }
+
+    private setupMultiplayerControls(): void {
+        document.querySelector<HTMLElement>('[data-stat="rival-base-status"]')!.hidden = !this.isMultiplayer;
+        if (!this.isMultiplayer) {
+            return;
+        }
+
+        const createGeneratorButton = (track: MonsterGeneratorTrack): HTMLButtonElement => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'difficulty-button difficulty-selector-button tower-selector-button monster-generator-button';
+            button.dataset.generatorButton = '';
+            button.dataset.generatorTrack = track;
+            button.setAttribute('aria-label', track === 'nibble' ? 'Upgrade Nibble spawn rate' : 'Upgrade stronger monster generator');
+            const icons = document.createElement('span');
+            icons.className = 'monster-generator-icons';
+            const iconTypes: MonsterGeneratorType[] = track === 'nibble' ? ['scout'] : ['grunt', 'tank', 'titan'];
+            for (const type of iconTypes) {
+                const meta = MONSTER_CONFIG[type];
+                const image = document.createElement('img');
+                image.src = meta.sprite;
+                image.alt = meta.label;
+                image.title = meta.label;
+                icons.append(image);
+            }
+            const copy = document.createElement('span');
+            copy.className = 'tower-selector-content monster-generator-copy';
+            const label = document.createElement('strong');
+            label.className = 'tower-selector-label';
+            label.textContent = track === 'nibble' ? 'Send Nibbles' : 'Send stronger';
+            const level = document.createElement('small');
+            level.dataset.generatorLevel = '';
+            copy.append(label, level);
+            const progress = document.createElement('i');
+            progress.className = 'generator-progress';
+            progress.dataset.generatorProgress = '';
+            button.append(icons, copy, progress);
+            button.addEventListener('click', () => {
+                const generator = this.generators.find((candidate) => candidate.teamId === this.localTeamId && candidate.track === track);
+                if (!generator || generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver) {
+                    return;
+                }
+                const rect = button.getBoundingClientRect();
+                this.panel.openCustomQuestion(getGeneratorUpgradeDifficulty(track), { x: rect.left + rect.width / 2, y: rect.top }, () => {
+                    this.requestCommand({ kind: 'upgradeGenerator', teamId: this.localTeamId, track });
+                });
+            });
+            return button;
+        };
+        this.panel.setExtraSelectorControls(GENERATOR_TRACKS.map(createGeneratorButton));
+        this.renderMonsterGeneratorControls();
+
+        const removeActionListener = multiplayerSession.onAction((command) => this.scheduleMultiplayerCommand(command));
+        const removeCommandListener = multiplayerSession.onCommand((command) => this.queueMultiplayerCommand(command));
+        const removeChecksumListener = multiplayerSession.onChecksum((tick, checksum) => this.receiveMultiplayerChecksum(tick, checksum));
+        const removeResyncRequestListener = multiplayerSession.onResyncRequest(() => {
+            multiplayerSession.sendResync(this.createMultiplayerSnapshot());
+        });
+        const removeResyncListener = multiplayerSession.onResync((snapshot) => this.applyMultiplayerSnapshot(snapshot));
+        const removeGameEndListener = multiplayerSession.onGameEnd((_tick, winner) => this.endGame(winner));
+        this.initializeComputerOpponent();
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            removeActionListener();
+            removeCommandListener();
+            removeChecksumListener();
+            removeResyncRequestListener();
+            removeResyncListener();
+            removeGameEndListener();
+        });
+    }
+
+    private renderMonsterGeneratorControls(): void {
+        if (!this.isMultiplayer) {
+            return;
+        }
+        for (const track of GENERATOR_TRACKS) {
+            const generator = this.generators.find((candidate) => candidate.teamId === this.localTeamId && candidate.track === track);
+            const button = document.querySelector<HTMLButtonElement>(`[data-generator-track="${track}"]`);
+            const level = button?.querySelector<HTMLElement>('[data-generator-level]');
+            const progress = button?.querySelector<HTMLElement>('[data-generator-progress]');
+            if (!generator || !level || !progress || !button) {
+                continue;
+            }
+            const mix = getMonsterMix(track, generator.level);
+            const unlockLabel = track === 'nibble' ? 'unlock Nibbles' : 'unlock Zappers';
+            level.textContent = generator.level === 0 ? `Off · ${unlockLabel}` : `L${generator.level} · ${mix.description}`;
+            progress.style.transform = `scaleX(${generator.progress})`;
+            button.disabled = generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver;
+            button.title = generator.level === 0
+                ? `Answer a ${track === 'nibble' ? 'base-level' : 'one-level-higher'} question to ${unlockLabel}`
+                : `Level ${generator.level}: ${mix.description}`;
+        }
+    }
+
+    private updateMonsterGenerators(deltaMs: number): void {
+        for (const generator of this.generators) {
+            if (generator.level <= 0) {
+                continue;
+            }
+            const periodMs = getGeneratorSpawnPeriodMs(generator.track, generator.level);
+            generator.progress += deltaMs / periodMs;
+            while (generator.progress >= 1) {
+                generator.progress -= 1;
+                generator.spawnCount += 1;
+                this.spawnMultiplayerEnemy(generator);
+            }
+        }
+        this.renderMonsterGeneratorControls();
+    }
+
+    private spawnMultiplayerEnemy(generator: MonsterGeneratorState): void {
+        const type = chooseMonsterType(generator.track, generator.level, this.multiplayerSpawnRng);
+        const meta = MONSTER_CONFIG[type];
+        const base = this.generatedMap.bases![generator.teamId];
+        const laneRows = [Math.floor(this.generatedMap.grid.rows * 0.3), Math.floor(this.generatedMap.grid.rows / 2), Math.floor(this.generatedMap.grid.rows * 0.72)];
+        const lane = this.multiplayerSpawnRng.choice(laneRows);
+        const center = cellCenter({ x: base.x, y: lane }, GAME_CONFIG.map);
+        const jitter = GAME_CONFIG.map.cellSize * 0.12;
+        const enemy = createEnemy(
+            this.nextMultiplayerEnemyId++,
+            meta.enemyType,
+            center.x + (this.multiplayerSpawnRng.next() - 0.5) * jitter,
+            center.y + (this.multiplayerSpawnRng.next() - 0.5) * jitter,
+            getGeneratorHealthScale(generator.track, type),
+            generator.teamId,
+        );
+        enemy.visualTier = meta.visualTier;
+        enemy.baseDamage *= getGeneratorDamageScale(generator.track, type);
+        this.enemies.push(enemy);
+    }
+
+    private createMultiplayerSnapshot(): MultiplayerSnapshot {
+        const destroyedTeam = TEAMS.find((teamId) => this.baseHealthByTeam[teamId] <= 0);
+        return {
+            tick: this.multiplayerTick,
+            elapsedMs: this.elapsedMs,
+            baseHealth: { ...this.baseHealthByTeam },
+            towers: this.towers.map((tower) => ({ ...tower })),
+            enemies: this.enemies.map((enemy) => ({
+                ...enemy,
+                lastProgressDistance: Number.isFinite(enemy.lastProgressDistance) ? enemy.lastProgressDistance : 1_000_000_000,
+                panicStartDistance: Number.isFinite(enemy.panicStartDistance) ? enemy.panicStartDistance : 1_000_000_000,
+            })),
+            projectiles: this.projectiles.map((projectile) => ({ ...projectile })),
+            explosions: this.explosions.map((explosion) => ({ ...explosion })),
+            generators: this.generators.map((generator) => ({ ...generator })),
+            stats: {
+                solar: { ...this.statsByTeam.solar },
+                lunar: { ...this.statsByTeam.lunar },
+            },
+            pendingCommands: this.pendingMultiplayerCommands.map((scheduled) => ({
+                ...scheduled,
+                command: { ...scheduled.command },
+            })),
+            pendingAirstrikes: this.pendingAirstrikes.map((airstrike) => ({
+                ...airstrike,
+                target: { ...airstrike.target },
+                start: { ...airstrike.start },
+                end: { ...airstrike.end },
+            })),
+            rngState: this.multiplayerSpawnRng.getState(),
+            nextIds: {
+                tower: this.nextTowerId,
+                airstrike: this.nextAirstrikeId,
+                enemy: this.nextMultiplayerEnemyId,
+                towerProjectile: this.towerSystem.getNextProjectileId(),
+                fragmentProjectile: this.projectileSystem.getNextProjectileId(),
+            },
+            gameOver: this.gameOver,
+            winner: destroyedTeam ? opponentOf(destroyedTeam) : undefined,
+        };
+    }
+
+    private applyMultiplayerSnapshot(snapshot: MultiplayerSnapshot): void {
+        this.multiplayerResyncCount += 1;
+        for (const tower of this.towers) {
+            if (tower.type === 'wall') {
+                this.generatedMap.grid.setTerrain(tower.gridX, tower.gridY, tower.baseTerrain ?? 'grass');
+            }
+        }
+        this.multiplayerTick = snapshot.tick;
+        this.multiplayerAccumulatorMs = 0;
+        this.elapsedMs = snapshot.elapsedMs;
+        this.baseHealthByTeam = { ...snapshot.baseHealth };
+        this.towers = snapshot.towers.map((tower) => ({ ...tower }));
+        for (const tower of this.towers) {
+            if (tower.type === 'wall') {
+                this.generatedMap.grid.setTerrain(tower.gridX, tower.gridY, 'tree');
+            }
+        }
+        this.enemies = snapshot.enemies.map((enemy) => ({ ...enemy }));
+        this.projectiles = snapshot.projectiles.map((projectile) => ({ ...projectile }));
+        this.explosions = snapshot.explosions.map((explosion) => ({ ...explosion }));
+        this.generators = snapshot.generators.map((generator) => ({ ...generator }));
+        this.pendingMultiplayerCommands = snapshot.pendingCommands.map((scheduled) => ({
+            ...scheduled,
+            command: { ...scheduled.command },
+        }));
+        this.pendingAirstrikes = snapshot.pendingAirstrikes.map((airstrike) => ({
+            ...airstrike,
+            target: { ...airstrike.target },
+            start: { ...airstrike.start },
+            end: { ...airstrike.end },
+        }));
+        this.multiplayerSpawnRng.restoreState(snapshot.rngState);
+        this.nextTowerId = snapshot.nextIds.tower;
+        this.nextAirstrikeId = snapshot.nextIds.airstrike;
+        this.nextMultiplayerEnemyId = snapshot.nextIds.enemy;
+        this.towerSystem.setNextProjectileId(snapshot.nextIds.towerProjectile);
+        this.projectileSystem.setNextProjectileId(snapshot.nextIds.fragmentProjectile);
+        this.statsByTeam = {
+            solar: { ...snapshot.stats.solar },
+            lunar: { ...snapshot.stats.lunar },
+        };
+        this.multiplayerChecksums.clear();
+        this.pendingRemoteChecksums.clear();
+        this.lastResyncRequestedTick = -1;
+        this.rebuildFlowField();
+        if (snapshot.gameOver && !this.gameOver) {
+            this.endGame(snapshot.winner);
+        } else if (!snapshot.gameOver && this.gameOver) {
+            this.gameOver = false;
+            document.querySelector<HTMLElement>('[data-testid="game-over"]')!.hidden = true;
+        }
+        this.renderMonsterGeneratorControls();
+        this.updateHud();
+        this.render();
     }
 
     private playRepeatedSound(key: string, count: number, volume: number): void {
@@ -497,6 +1162,24 @@ export class GameScene extends Phaser.Scene {
     }
 
     private rebuildFlowField(): void {
+        if (this.isMultiplayer && this.generatedMap.bases) {
+            this.threatCostsByTeam = {
+                solar: calculateTowerThreatCosts(this.generatedMap.grid, this.towers.filter((tower) => tower.teamId === 'solar'), GAME_CONFIG.map),
+                lunar: calculateTowerThreatCosts(this.generatedMap.grid, this.towers.filter((tower) => tower.teamId === 'lunar'), GAME_CONFIG.map),
+            };
+            this.flowFields = {
+                solar: buildFlowField(this.generatedMap.grid, this.generatedMap.bases.solar, this.threatCostsByTeam.solar),
+                lunar: buildFlowField(this.generatedMap.grid, this.generatedMap.bases.lunar, this.threatCostsByTeam.lunar),
+            };
+            this.emergencyFlowFields = {
+                solar: buildFlowField(this.generatedMap.grid, this.generatedMap.bases.solar, createEmptyCostGrid(this.generatedMap.grid)),
+                lunar: buildFlowField(this.generatedMap.grid, this.generatedMap.bases.lunar, createEmptyCostGrid(this.generatedMap.grid)),
+            };
+            this.flowField = this.flowFields[this.localTeamId];
+            this.emergencyFlowField = this.emergencyFlowFields[this.localTeamId];
+            this.threatCosts = this.threatCostsByTeam[this.localTeamId];
+            return;
+        }
         this.threatCosts = calculateTowerThreatCosts(this.generatedMap.grid, this.towers, GAME_CONFIG.map);
         this.flowField = buildFlowField(this.generatedMap.grid, this.generatedMap.base, this.threatCosts);
         this.emergencyFlowField = buildFlowField(this.generatedMap.grid, this.generatedMap.base, createEmptyCostGrid(this.generatedMap.grid));
@@ -544,7 +1227,10 @@ export class GameScene extends Phaser.Scene {
                 GAME_CONFIG.canvasHeight / (mapHeight + padding * 2),
             );
             camera.setZoom(zoom);
-            camera.centerOn(originX + mapWidth / 2, originY + mapHeight / 2);
+            camera.centerOn(
+                originX + mapWidth / 2,
+                originY + camera.displayHeight / 2,
+            );
         };
         fit();
         this.scale.on(Phaser.Scale.Events.RESIZE, fit);
@@ -562,6 +1248,7 @@ export class GameScene extends Phaser.Scene {
         const popup = document.querySelector<HTMLElement>('[data-testid="settings-popup"]')!;
         const spawnRateSelect = document.querySelector<HTMLSelectElement>('[data-testid="spawn-rate-select"]')!;
         const baseDifficultySelect = document.querySelector<HTMLSelectElement>('[data-testid="base-difficulty-select"]')!;
+        const answerModeSelect = document.querySelector<HTMLSelectElement>('[data-testid="answer-mode-select"]')!;
         this.mobileLayout?.attachSettingsPopup(popup);
         const setPopupOpen = (open: boolean) => {
             if (this.mobileLayout) {
@@ -576,6 +1263,10 @@ export class GameScene extends Phaser.Scene {
         };
         const restartGame = () => {
             closePopup();
+            if (this.isMultiplayer) {
+                return;
+            }
+            window.sessionStorage.setItem('arithmetic-annihilation:resume-single', 'true');
             window.location.reload();
         };
 
@@ -594,7 +1285,15 @@ export class GameScene extends Phaser.Scene {
             const value = baseDifficultySelect.value;
             if (isBaseMathsDifficulty(value) && value !== this.baseDifficulty) {
                 this.setBaseDifficulty(value);
-                restartGame();
+                if (!this.isMultiplayer) {
+                    restartGame();
+                }
+            }
+        });
+        answerModeSelect.addEventListener('change', () => {
+            const value = answerModeSelect.value;
+            if (isMobileAnswerMode(value) && value !== this.mobileAnswerMode) {
+                this.setMobileAnswerMode(value);
             }
         });
         document.addEventListener('keydown', (event) => {
@@ -627,7 +1326,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     private syncPauseState(): void {
-        this.isPaused = this.manualPauseRequested || this.questionPauseActive;
+        this.isPaused = this.isMultiplayer ? false : this.manualPauseRequested || this.questionPauseActive;
         const pausedOverlay = document.querySelector<HTMLElement>('[data-testid="pause-overlay"]');
         if (pausedOverlay) {
             pausedOverlay.hidden = !this.manualPauseRequested;
@@ -644,6 +1343,9 @@ export class GameScene extends Phaser.Scene {
 
     private setupGameOverControls(): void {
         document.querySelector<HTMLButtonElement>('[data-testid="restart-game-button"]')?.addEventListener('click', () => {
+            if (!this.isMultiplayer) {
+                window.sessionStorage.setItem('arithmetic-annihilation:resume-single', 'true');
+            }
             window.location.reload();
         });
     }
@@ -659,6 +1361,12 @@ export class GameScene extends Phaser.Scene {
         const savedBaseDifficulty = this.readUrlOption(URL_OPTION_KEYS.baseDifficulty)
             ?? window.localStorage.getItem(BASE_DIFFICULTY_STORAGE_KEY);
         return savedBaseDifficulty ? normalizeBaseMathsDifficulty(savedBaseDifficulty) ?? 'year3' : 'year3';
+    }
+
+    private readSavedMobileAnswerMode(): MobileAnswerMode {
+        const savedAnswerMode = this.readUrlOption(URL_OPTION_KEYS.answerMode)
+            ?? window.localStorage.getItem(ANSWER_MODE_STORAGE_KEY);
+        return savedAnswerMode && isMobileAnswerMode(savedAnswerMode) ? savedAnswerMode : 'multiple-choice';
     }
 
     private readSavedMusicVolume(): number {
@@ -685,6 +1393,7 @@ export class GameScene extends Phaser.Scene {
         const params = new URLSearchParams(window.location.search);
         params.set(URL_OPTION_KEYS.spawnRate, this.spawnRate);
         params.set(URL_OPTION_KEYS.baseDifficulty, this.baseDifficulty);
+        params.set(URL_OPTION_KEYS.answerMode, this.mobileAnswerMode);
         params.set(URL_OPTION_KEYS.musicVolume, String(this.musicVolume));
         params.set(URL_OPTION_KEYS.musicMuted, String(this.musicMuted));
         const query = params.toString();
@@ -703,6 +1412,14 @@ export class GameScene extends Phaser.Scene {
         window.localStorage.setItem(BASE_DIFFICULTY_STORAGE_KEY, baseDifficulty);
         this.mathsSystem.setBaseDifficulty(baseDifficulty);
         this.panel.close();
+        this.syncSettingsControls();
+        this.syncUrlOptions();
+    }
+
+    private setMobileAnswerMode(answerMode: MobileAnswerMode): void {
+        this.mobileAnswerMode = answerMode;
+        window.localStorage.setItem(ANSWER_MODE_STORAGE_KEY, answerMode);
+        this.panel.setMobileAnswerMode(answerMode);
         this.syncSettingsControls();
         this.syncUrlOptions();
     }
@@ -790,6 +1507,9 @@ export class GameScene extends Phaser.Scene {
 
         if (this.gameOver) {
             text = '';
+        } else if (this.isMultiplayer && this.questionPauseActive) {
+            text = 'The battle continues while you answer.';
+            state = 'instruction';
         } else if (this.questionPauseActive && this.mobileLayout) {
             text = '';
         } else if (this.questionPauseActive) {
@@ -798,6 +1518,9 @@ export class GameScene extends Phaser.Scene {
         } else if (this.manualPauseRequested) {
             text = 'Game paused.';
             state = 'paused';
+        } else if (this.isMultiplayer && this.towers.every((tower) => tower.teamId !== this.localTeamId)) {
+            text = 'Build on your half, or unlock a monster generator below.';
+            state = 'instruction';
         } else if (this.towers.length === 0) {
             text = 'Click on a square to place a tower to start game.';
             state = 'instruction';
@@ -824,27 +1547,38 @@ export class GameScene extends Phaser.Scene {
         if (baseDifficultySelect) {
             baseDifficultySelect.value = this.baseDifficulty;
         }
+        const answerModeSelect = document.querySelector<HTMLSelectElement>('[data-testid="answer-mode-select"]');
+        if (answerModeSelect) {
+            answerModeSelect.value = this.mobileAnswerMode;
+        }
         const popup = document.querySelector<HTMLElement>('[data-testid="settings-popup"]');
         if (popup) {
             popup.setAttribute(
                 'aria-label',
-                `Settings, spawn rate ${SPAWN_RATE_LABELS[this.spawnRate]}, base difficulty ${BASE_MATHS_DIFFICULTY_LABELS[this.baseDifficulty]}`,
+                `Settings, spawn rate ${SPAWN_RATE_LABELS[this.spawnRate]}, base difficulty ${BASE_MATHS_DIFFICULTY_LABELS[this.baseDifficulty]}, mobile answers ${ANSWER_MODE_LABELS[this.mobileAnswerMode]}`,
             );
         }
     }
 
     private updateHud(): void {
-        const healthPercent = Math.max(0, Math.min(1, this.baseHealth / GAME_CONFIG.baseHealth));
+        const localHealth = this.isMultiplayer ? this.baseHealthByTeam[this.localTeamId] : this.baseHealth;
+        const healthPercent = Math.max(0, Math.min(1, localHealth / GAME_CONFIG.baseHealth));
         const baseHealthColor = this.formatBaseHealthColor(healthPercent);
         const hud = document.querySelector<HTMLElement>('#hud')!;
-        document.querySelector('[data-stat="health"]')!.textContent = `${Math.ceil(this.baseHealth)}`;
+        document.querySelector('[data-stat="health"]')!.textContent = `${Math.ceil(localHealth)}`;
         document.querySelector<HTMLElement>('[data-stat="base-fill"]')!.style.transform = `scaleX(${healthPercent})`;
-        document.querySelector<HTMLElement>('[data-stat="base-meter"]')!.setAttribute('aria-valuenow', `${Math.ceil(this.baseHealth)}`);
+        document.querySelector<HTMLElement>('[data-stat="base-meter"]')!.setAttribute('aria-valuenow', `${Math.ceil(localHealth)}`);
         hud.style.setProperty('--base-health-color', baseHealthColor);
         document.querySelector('[data-stat="time"]')!.textContent = this.formatTime(this.elapsedMs);
-        document.querySelector('[data-stat="kills"]')!.textContent = `${this.kills}`;
-        const accuracy = this.answered === 0 ? '0/0' : `${this.correctAnswers}/${this.answered} (${Math.round((this.correctAnswers / this.answered) * 100)}%)`;
+        const localStats = this.isMultiplayer ? this.statsByTeam[this.localTeamId] : { kills: this.kills, answered: this.answered, correctAnswers: this.correctAnswers };
+        document.querySelector('[data-stat="kills"]')!.textContent = `${this.isMultiplayer ? localStats.kills : this.kills}`;
+        const accuracy = localStats.answered === 0 ? '0/0' : `${localStats.correctAnswers}/${localStats.answered} (${Math.round((localStats.correctAnswers / localStats.answered) * 100)}%)`;
         document.querySelector('[data-stat="accuracy"]')!.textContent = accuracy;
+        if (this.isMultiplayer) {
+            document.querySelector<HTMLElement>('[data-stat="base-label"]')!.textContent = 'You';
+            document.querySelector<HTMLElement>('[data-stat="rival-base-status"]')!.hidden = false;
+            document.querySelector<HTMLElement>('[data-stat="rival-health"]')!.textContent = `${Math.ceil(this.baseHealthByTeam[opponentOf(this.localTeamId)])}`;
+        }
     }
 
     private formatBaseHealthColor(healthPercent: number): string {
@@ -867,10 +1601,19 @@ export class GameScene extends Phaser.Scene {
         hud.classList.add('base-hit');
     }
 
-    private endGame(): void {
+    private endGame(winner?: TeamId): void {
+        const wasGameOver = this.gameOver;
         this.gameOver = true;
         const gameOver = document.querySelector<HTMLElement>('[data-testid="game-over"]')!;
         gameOver.hidden = false;
+        if (this.isMultiplayer) {
+            const resolvedWinner = winner ?? (this.baseHealthByTeam.solar <= 0 ? 'lunar' : 'solar');
+            document.querySelector<HTMLElement>('[data-game-over-message]')!.textContent = resolvedWinner === this.localTeamId ? 'You win!' : 'Your base was destroyed';
+            this.renderMonsterGeneratorControls();
+            if (multiplayerSession.isAuthoritative && !wasGameOver) {
+                multiplayerSession.announceGameEnd(this.multiplayerTick, resolvedWinner);
+            }
+        }
         document.querySelector('[data-game-over-time]')!.textContent = this.formatTime(this.elapsedMs);
         this.syncStatusMessage();
     }
@@ -915,20 +1658,33 @@ export class GameScene extends Phaser.Scene {
                 this.graphics.lineBetween(originX, worldY, originX + grid.cols * cellSize, worldY);
             }
         }
-        for (const spawn of spawns) {
+        for (const [index, spawn] of spawns.entries()) {
             const center = cellCenter(spawn, GAME_CONFIG.map);
-            this.graphics.fillStyle(0xf3b64b, 1);
-            this.graphics.fillTriangle(center.x - 14, center.y - 14, center.x - 14, center.y + 14, center.x + 16, center.y);
-            this.graphics.lineStyle(2, 0x3b2106, 0.7);
+            const spawnTeam: TeamId = index === 0 ? 'solar' : 'lunar';
+            this.graphics.fillStyle(this.isOpponentTeam(spawnTeam) ? 0x969696 : 0xf3b64b, 1);
+            if (this.isMultiplayer && index === 1) {
+                this.graphics.fillTriangle(center.x + 14, center.y - 14, center.x + 14, center.y + 14, center.x - 16, center.y);
+            } else {
+                this.graphics.fillTriangle(center.x - 14, center.y - 14, center.x - 14, center.y + 14, center.x + 16, center.y);
+            }
+            this.graphics.lineStyle(2, this.isOpponentTeam(spawnTeam) ? 0x3f3f3f : 0x3b2106, 0.7);
             this.graphics.strokeCircle(center.x, center.y, 18);
         }
         this.graphics.lineStyle(2, 0x132119, 0.28);
-        this.graphics.strokeRect(
-            originX + (base.x - 1) * cellSize + 1,
-            originY + (base.y - 1) * cellSize + 1,
-            cellSize * 3 - 2,
-            cellSize * 3 - 2,
-        );
+        const bases = this.isMultiplayer ? Object.values(this.generatedMap.bases!) : [base];
+        for (const renderedBase of bases) {
+            this.graphics.strokeRect(
+                originX + (renderedBase.x - 1) * cellSize + 1,
+                originY + (renderedBase.y - 1) * cellSize + 1,
+                cellSize * 3 - 2,
+                cellSize * 3 - 2,
+            );
+        }
+        if (this.isMultiplayer) {
+            const splitX = originX + grid.cols / 2 * cellSize;
+            this.graphics.lineStyle(3, 0xf7f0d6, 0.32);
+            this.graphics.lineBetween(splitX, originY, splitX, originY + grid.rows * cellSize);
+        }
     }
 
     private renderBaseDamageFlash(): void {
@@ -936,7 +1692,7 @@ export class GameScene extends Phaser.Scene {
             this.baseSprite.clearTint();
             return;
         }
-        const { base } = this.generatedMap;
+        const base = this.isMultiplayer ? this.generatedMap.bases![this.localTeamId] : this.generatedMap.base;
         const { originX, originY, cellSize } = GAME_CONFIG.map;
         const alpha = Math.max(0, Math.min(1, this.baseDamageFlashMs / 360));
         this.baseSprite.setTint(0xff6b6b);
@@ -954,7 +1710,8 @@ export class GameScene extends Phaser.Scene {
             }
             const center = cellCenter({ x: tower.gridX, y: tower.gridY }, GAME_CONFIG.map);
             const stats = getTowerStats(tower);
-            this.graphics.lineStyle(2, TOWER_COLORS[tower.type], tower === this.selectedTower ? 0.54 : 0.24);
+            const rangeColor = this.isOpponentTeam(tower.teamId) ? 0x969696 : TOWER_COLORS[tower.type];
+            this.graphics.lineStyle(2, rangeColor, tower === this.selectedTower ? 0.54 : 0.24);
             this.graphics.strokeCircle(center.x, center.y, stats.range);
         }
     }
@@ -984,10 +1741,10 @@ export class GameScene extends Phaser.Scene {
             }
             let sprite = this.towerSprites.get(tower.id);
             if (!sprite) {
-                sprite = this.add.image(center.x, center.y, TOWER_TEXTURES[tower.type]).setDepth(2);
+                sprite = this.add.image(center.x, center.y, this.getTeamTextureKey(TOWER_TEXTURES[tower.type], tower.teamId)).setDepth(2);
                 this.towerSprites.set(tower.id, sprite);
             }
-            sprite.setTexture(TOWER_TEXTURES[tower.type]);
+            sprite.setTexture(this.getTeamTextureKey(TOWER_TEXTURES[tower.type], tower.teamId));
             sprite.setPosition(center.x, center.y);
             this.setSpriteMaxSize(sprite, TOWER_SPRITE_MAX_SIZE);
             sprite.setAlpha(tower === this.selectedTower ? 1 : 0.96);
@@ -1020,13 +1777,14 @@ export class GameScene extends Phaser.Scene {
     private renderFlamethrowerTower(tower: TowerState, center: Vec2): void {
         const radius = GAME_CONFIG.map.cellSize * 0.34;
         const angle = tower.flameAngleRadians ?? 0;
-        this.graphics.fillStyle(0x3a0c08, 0.64);
+        const opponent = this.isOpponentTeam(tower.teamId);
+        this.graphics.fillStyle(opponent ? 0x303030 : 0x3a0c08, 0.64);
         this.graphics.fillCircle(center.x + 2, center.y + 3, radius * 1.12);
-        this.graphics.fillStyle(0xff3030, tower === this.selectedTower ? 1 : 0.94);
+        this.graphics.fillStyle(opponent ? 0x858585 : 0xff3030, tower === this.selectedTower ? 1 : 0.94);
         this.graphics.fillCircle(center.x, center.y, radius);
-        this.graphics.fillStyle(0xff8a16, 0.82);
+        this.graphics.fillStyle(opponent ? 0xb8b8b8 : 0xff8a16, 0.82);
         this.graphics.fillCircle(center.x - radius * 0.22, center.y - radius * 0.24, radius * 0.28);
-        this.graphics.lineStyle(4, 0xfff1a8, 0.95);
+        this.graphics.lineStyle(4, opponent ? 0xe0e0e0 : 0xfff1a8, 0.95);
         this.graphics.beginPath();
         this.graphics.moveTo(center.x + Math.cos(angle) * radius * 0.2, center.y + Math.sin(angle) * radius * 0.2);
         this.graphics.lineTo(center.x + Math.cos(angle) * radius * 1.18, center.y + Math.sin(angle) * radius * 1.18);
@@ -1079,18 +1837,21 @@ export class GameScene extends Phaser.Scene {
             shadow.setTexture(textureKey);
             shadow.setPosition(enemy.x + shadowOffsetX, enemy.y + shadowOffsetY);
             this.setEnemySpriteSize(shadow, spriteSize * 1.08);
+            shadow.setFlipX(enemy.teamId === 'lunar');
             shadow.setDepth(depth - 0.01);
 
             sprite.setTexture(textureKey);
             sprite.setPosition(enemy.x, enemy.y);
             this.setEnemySpriteSize(sprite, spriteSize);
+            sprite.setFlipX(enemy.teamId === 'lunar');
             sprite.setDepth(depth);
 
             const barWidth = enemy.radius * 2.1;
             const healthPercent = Math.max(0, enemy.health / enemy.maxHealth);
             this.graphics.fillStyle(0x111611, 0.88);
             this.graphics.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.radius - 8, barWidth, 4);
-            this.graphics.fillStyle(healthPercent > 0.45 ? 0x66d17a : 0xe85d75, 1);
+            const healthyColor = this.isOpponentTeam(enemy.teamId) ? 0xa8a8a8 : 0x66d17a;
+            this.graphics.fillStyle(healthPercent > 0.45 ? healthyColor : 0xe85d75, 1);
             this.graphics.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.radius - 8, barWidth * healthPercent, 4);
         }
 
@@ -1375,15 +2136,26 @@ export class GameScene extends Phaser.Scene {
         const { originX, originY, cellSize } = GAME_CONFIG.map;
 
         grid.forEachCell((x, y, terrain) => {
-            const textureKey = this.getTerrainTextureKey(terrain, x, y);
-            this.add
+            const cellTeam: TeamId = x < grid.cols / 2 ? 'solar' : 'lunar';
+            const textureKey = this.getTeamTextureKey(this.getTerrainTextureKey(terrain, x, y), cellTeam);
+            const sprite = this.add
                 .image(originX + x * cellSize + cellSize / 2, originY + y * cellSize + cellSize / 2, textureKey)
                 .setDisplaySize(cellSize, cellSize)
                 .setDepth(0);
+            this.terrainSprites.push(sprite);
         });
 
-        const baseCenter = cellCenter(base, GAME_CONFIG.map);
-        this.baseSprite = this.add.image(baseCenter.x, baseCenter.y, SPRITE_PATHS.base).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
+        if (this.isMultiplayer) {
+            for (const teamId of TEAMS) {
+                const baseCenter = cellCenter(this.generatedMap.bases![teamId], GAME_CONFIG.map);
+                const sprite = this.add.image(baseCenter.x, baseCenter.y, this.getTeamTextureKey(SPRITE_PATHS.base, teamId)).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
+                this.baseSprites.set(teamId, sprite);
+            }
+            this.baseSprite = this.baseSprites.get(this.localTeamId)!;
+        } else {
+            const baseCenter = cellCenter(base, GAME_CONFIG.map);
+            this.baseSprite = this.add.image(baseCenter.x, baseCenter.y, SPRITE_PATHS.base).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
+        }
     }
 
     private getTerrainTextureKey(terrain: TerrainType, x: number, y: number): string {
@@ -1395,10 +2167,49 @@ export class GameScene extends Phaser.Scene {
     private getEnemyTextureKey(enemy: EnemyState): string {
         const tier = this.getEnemyTextureTier(enemy);
         const state = this.getEnemyTextureState(enemy);
-        return ENEMY_TEXTURES[tier][state];
+        return this.getTeamTextureKey(ENEMY_TEXTURES[tier][state], enemy.teamId);
+    }
+
+    private createOpponentTextureVariants(): void {
+        if (!this.isMultiplayer) {
+            return;
+        }
+        const sourceKeys = new Set<string>(Object.values(SPRITE_PATHS));
+        for (const sourceKey of sourceKeys) {
+            const opponentKey = `opponent:${sourceKey}`;
+            this.opponentTextureKeys.set(sourceKey, opponentKey);
+            if (this.textures.exists(opponentKey)) {
+                continue;
+            }
+            const source = this.textures.get(sourceKey).getSourceImage() as CanvasImageSource & { width: number; height: number };
+            const texture = this.textures.createCanvas(opponentKey, source.width, source.height);
+            if (!texture) {
+                continue;
+            }
+            const context = texture.context;
+            context.save();
+            context.filter = 'grayscale(1)';
+            context.drawImage(source, 0, 0, source.width, source.height);
+            context.restore();
+            texture.refresh();
+        }
+    }
+
+    private getTeamTextureKey(sourceKey: string, teamId?: TeamId): string {
+        if (!this.isOpponentTeam(teamId)) {
+            return sourceKey;
+        }
+        return this.opponentTextureKeys.get(sourceKey) ?? sourceKey;
+    }
+
+    private isOpponentTeam(teamId?: TeamId): boolean {
+        return this.isMultiplayer && teamId !== undefined && teamId !== this.localTeamId;
     }
 
     private getEnemyTextureTier(enemy: EnemyState): EnemyTextureTier {
+        if (enemy.visualTier) {
+            return enemy.visualTier;
+        }
         const healthScale = enemy.maxHealth / ENEMY_STATS[enemy.type].health;
         if (enemy.type === 'scout') {
             return healthScale >= 2.35 ? 2 : 1;
@@ -1437,22 +2248,58 @@ export class GameScene extends Phaser.Scene {
             getCanvasPointForWorldPoint: (worldX: number, worldY: number) => {
                 const camera = this.cameras.main;
                 return {
-                    x: (worldX - camera.scrollX) * camera.zoom,
-                    y: (worldY - camera.scrollY) * camera.zoom,
+                    x: (worldX - camera.worldView.x) * camera.zoom,
+                    y: (worldY - camera.worldView.y) * camera.zoom,
+                };
+            },
+            getMapViewportBounds: () => {
+                const camera = this.cameras.main;
+                const { originX, originY, cols, rows, cellSize } = GAME_CONFIG.map;
+                return {
+                    left: (originX - camera.worldView.x) * camera.zoom,
+                    top: (originY - camera.worldView.y) * camera.zoom,
+                    right: (originX + cols * cellSize - camera.worldView.x) * camera.zoom,
+                    bottom: (originY + rows * cellSize - camera.worldView.y) * camera.zoom,
                 };
             },
             getTowerCount: () => this.towers.length,
             getTowerTypes: () => this.towers.map((tower) => tower.type),
             getEnemyCount: () => this.enemies.length,
             getEnemySnapshot: () => this.enemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y, health: enemy.health })),
+            getGeneratorLevel: () => this.generators
+                .filter((generator) => generator.teamId === this.localTeamId)
+                .reduce((total, generator) => total + generator.level, 0),
+            getGeneratorLevels: () => ({
+                solar: this.generators.filter((generator) => generator.teamId === 'solar').reduce((total, generator) => total + generator.level, 0),
+                lunar: this.generators.filter((generator) => generator.teamId === 'lunar').reduce((total, generator) => total + generator.level, 0),
+            }),
+            getGeneratorLevelsByTrack: () => Object.fromEntries(TEAMS.map((teamId) => [
+                teamId,
+                Object.fromEntries(GENERATOR_TRACKS.map((track) => [
+                    track,
+                    this.generators.find((generator) => generator.teamId === teamId && generator.track === track)?.level ?? 0,
+                ])),
+            ])),
+            getMultiplayerResyncCount: () => this.multiplayerResyncCount,
+            isComputerOpponent: () => multiplayerSession.isComputerOpponent,
+            getTerrainTextureKeys: () => this.terrainSprites.map((sprite) => sprite.texture.key),
+            getBaseTextureKeys: () => ({
+                solar: this.baseSprites.get('solar')?.texture.key ?? '',
+                lunar: this.baseSprites.get('lunar')?.texture.key ?? '',
+            }),
+            getTowerTextureKeys: () => [...this.towerSprites.values()].map((sprite) => sprite.texture.key),
+            getEnemyTextureKeys: () => [...this.enemySprites.values()].map((sprite) => sprite.texture.key),
             getBaseHealth: () => this.baseHealth,
             getElapsedMs: () => this.elapsedMs,
             isPaused: () => this.isPaused,
             getCurrentQuestionAnswer: () => this.panel.getCurrentQuestionAnswer(),
+            getCurrentQuestionYearLevel: () => this.panel.getCurrentQuestionYearLevel(),
             getSpawnRate: () => this.spawnRate,
             setSpawnRate: (spawnRate: GameDifficulty) => this.setSpawnRate(spawnRate),
             getBaseDifficulty: () => this.baseDifficulty,
             setBaseDifficulty: (baseDifficulty: BaseMathsDifficulty) => this.setBaseDifficulty(baseDifficulty),
+            getMobileAnswerMode: () => this.mobileAnswerMode,
+            setMobileAnswerMode: (answerMode: MobileAnswerMode) => this.setMobileAnswerMode(answerMode),
             getMusicMuted: () => this.musicMuted,
             setMusicMuted: (muted: boolean) => this.setMusicMuted(muted),
             getMusicVolume: () => this.musicVolume,

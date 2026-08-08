@@ -115,6 +115,14 @@ function bounceProjectile(projectile: ProjectileState, collision: TreeCollision)
 export class ProjectileSystem {
     private nextProjectileId = 100000;
 
+    getNextProjectileId(): number {
+        return this.nextProjectileId;
+    }
+
+    setNextProjectileId(nextProjectileId: number): void {
+        this.nextProjectileId = Math.max(100000, Math.floor(nextProjectileId));
+    }
+
     update(deltaMs: number, projectiles: ProjectileState[], enemies: EnemyState[], grid: Grid, geometry: MapGeometry): ProjectileUpdateResult {
         const aliveProjectiles: ProjectileState[] = [];
         const spawnedFragments: ProjectileState[] = [];
@@ -174,9 +182,11 @@ export class ProjectileSystem {
     }
 
     private updateMissileVelocity(projectile: ProjectileState, enemies: readonly EnemyState[], deltaMs: number): void {
-        let target = enemies.find((enemy) => enemy.id === projectile.targetId && enemy.health > 0);
+        let target = enemies.find((enemy) => enemy.id === projectile.targetId && enemy.health > 0
+            && (projectile.teamId === undefined || enemy.teamId !== projectile.teamId));
         if (!target) {
-            target = enemies.filter((enemy) => enemy.health > 0).sort((a, b) => Math.hypot(a.x - projectile.x, a.y - projectile.y) - Math.hypot(b.x - projectile.x, b.y - projectile.y))[0];
+            target = enemies.filter((enemy) => enemy.health > 0 && (projectile.teamId === undefined || enemy.teamId !== projectile.teamId))
+                .sort((a, b) => Math.hypot(a.x - projectile.x, a.y - projectile.y) - Math.hypot(b.x - projectile.x, b.y - projectile.y))[0];
             projectile.targetId = target?.id;
         }
         if (!target) {
@@ -196,7 +206,9 @@ export class ProjectileSystem {
     }
 
     private findHitEnemy(projectile: ProjectileState, enemies: readonly EnemyState[]): EnemyState | undefined {
-        return enemies.find((enemy) => enemy.health > 0 && Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= enemy.radius + projectile.radius);
+        return enemies.find((enemy) => enemy.health > 0
+            && (projectile.teamId === undefined || enemy.teamId !== projectile.teamId)
+            && Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= enemy.radius + projectile.radius);
     }
 
     private explodeCluster(projectile: ProjectileState, enemies: EnemyState[], fragments: ProjectileState[], explosions: { x: number; y: number; radius: number; lifeMs: number }[]): { kills: number; hurtSounds: number; deathSounds: number } {
@@ -205,7 +217,7 @@ export class ProjectileSystem {
         let hurtSounds = 0;
         let deathSounds = 0;
         for (const enemy of enemies) {
-            if (enemy.health <= 0) {
+            if (enemy.health <= 0 || (projectile.teamId !== undefined && enemy.teamId === projectile.teamId)) {
                 continue;
             }
             const distance = Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y);
@@ -223,7 +235,7 @@ export class ProjectileSystem {
         for (let index = 0; index < fragmentCount; index += 1) {
             const angle = (Math.PI * 2 * index) / fragmentCount;
             const speed = 260;
-            const fragment = createProjectile(this.nextProjectileId++, 'fragment', projectile.x, projectile.y, Math.cos(angle) * speed, Math.sin(angle) * speed, projectile.fragmentDamage ?? 7, 3.2, 620);
+            const fragment = createProjectile(this.nextProjectileId++, 'fragment', projectile.x, projectile.y, Math.cos(angle) * speed, Math.sin(angle) * speed, projectile.fragmentDamage ?? 7, 3.2, 620, projectile.teamId);
             fragments.push(fragment);
         }
         return { kills, hurtSounds, deathSounds };

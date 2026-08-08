@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "maths-game-problem-generator": "1.1.0",
+    "peerjs": "^1.5.5",
     "phaser": "latest",
     "vite": "latest"
   },

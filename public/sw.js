@@ -2,7 +2,8 @@
  * Uses a network-first strategy for navigation requests and a cache-first
  * strategy for static assets so the installed app keeps working offline. */
 
-const CACHE_NAME = 'arithmetic-annihilation-v1';
+const CACHE_NAME = 'arithmetic-annihilation-v3';
+const NETWORK_FIRST_DESTINATIONS = new Set(['document', 'script', 'style', 'manifest']);
 
 self.addEventListener('install', () => {
     self.skipWaiting();
@@ -29,7 +30,7 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    if (request.mode === 'navigate') {
+    if (request.mode === 'navigate' || NETWORK_FIRST_DESTINATIONS.has(request.destination)) {
         event.respondWith(networkFirst(request));
         return;
     }

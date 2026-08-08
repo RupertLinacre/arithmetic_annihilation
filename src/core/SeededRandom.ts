@@ -66,4 +66,15 @@ export class SeededRandom {
         }
         return items[items.length - 1];
     }
+
+    getState(): number {
+        return this.state >>> 0;
+    }
+
+    restoreState(state: number): void {
+        this.state = state >>> 0;
+        if (this.state === 0) {
+            this.state = 0x6d2b79f5;
+        }
+    }
 }

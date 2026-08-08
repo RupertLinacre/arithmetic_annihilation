@@ -27,7 +27,7 @@ export function findNearestWallTower(enemy: EnemyState, towers: readonly TowerSt
     let nearestWall: TowerState | undefined;
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const tower of towers) {
-        if (!isWallTower(tower)) {
+        if (!isWallTower(tower) || (enemy.teamId !== undefined && tower.teamId === enemy.teamId)) {
             continue;
         }
         const center = cellCenter({ x: tower.gridX, y: tower.gridY }, geometry);
@@ -49,7 +49,7 @@ function findWallObjective(enemy: EnemyState, towers: readonly TowerState[], gri
     let bestObjective: WallObjective | undefined;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const wall of towers) {
-        if (!isWallTower(wall)) {
+        if (!isWallTower(wall) || (enemy.teamId !== undefined && wall.teamId === enemy.teamId)) {
             continue;
         }
         const wallFlowField = buildFlowField(grid, { x: wall.gridX, y: wall.gridY }, threatCosts);

@@ -1,6 +1,6 @@
-import type { ProjectileState, ProjectileType } from '../types';
+import type { ProjectileState, ProjectileType, TeamId } from '../types';
 
-export function createProjectile(id: number, type: ProjectileType, x: number, y: number, vx: number, vy: number, damage: number, radius: number, lifeMs: number): ProjectileState {
+export function createProjectile(id: number, type: ProjectileType, x: number, y: number, vx: number, vy: number, damage: number, radius: number, lifeMs: number, teamId?: TeamId): ProjectileState {
     return {
         id,
         type,
@@ -14,5 +14,6 @@ export function createProjectile(id: number, type: ProjectileType, x: number, y:
         radius,
         lifeMs,
         maxLifeMs: lifeMs,
+        teamId,
     };
 }
