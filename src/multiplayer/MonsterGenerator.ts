@@ -1,9 +1,15 @@
 import { ENEMY_STATS } from '../config/gameConfig';
 import type { SeededRandom } from '../core/SeededRandom';
-import { OFFENSE_HEALTH_PER_MINUTE_PER_POINT } from './BalanceConfig';
+import {
+    INITIAL_ADVANCED_HEALTH_PER_MINUTE,
+    INITIAL_NIBBLE_HEALTH_PER_MINUTE,
+    OFFENSE_HEALTH_PER_MINUTE_PER_POINT,
+} from './BalanceConfig';
 import type { MonsterGeneratorTrack, MonsterGeneratorType, TowerDifficulty } from '../types';
 
-export const MAX_MONSTER_GENERATOR_LEVEL = 16;
+// This exists as a UI/programming safety guard, not a gameplay cap. At ordinary
+// answer rates it is effectively unreachable, so offense can scale indefinitely.
+export const MAX_MONSTER_GENERATOR_LEVEL = Number.MAX_SAFE_INTEGER;
 export const WRONG_ANSWER_NIBBLE_LEVEL_MULTIPLIER = 1 / 3;
 
 export interface MonsterMix {
@@ -66,7 +72,16 @@ export function getExpectedMonsterHealth(track: MonsterGeneratorTrack, level: nu
 }
 
 export function getGeneratorHealthPerMinute(track: MonsterGeneratorTrack, level: number): number {
-    return Math.max(0, level) * getGeneratorQuestionValue(track) * OFFENSE_HEALTH_PER_MINUTE_PER_POINT;
+    const positiveLevel = Math.max(0, level);
+    if (track === 'nibble') {
+        return positiveLevel <= 1
+            ? positiveLevel * INITIAL_NIBBLE_HEALTH_PER_MINUTE
+            : INITIAL_NIBBLE_HEALTH_PER_MINUTE + (positiveLevel - 1) * OFFENSE_HEALTH_PER_MINUTE_PER_POINT;
+    }
+    return positiveLevel <= 1
+        ? positiveLevel * INITIAL_ADVANCED_HEALTH_PER_MINUTE
+        : INITIAL_ADVANCED_HEALTH_PER_MINUTE
+            + (positiveLevel - 1) * getGeneratorQuestionValue(track) * OFFENSE_HEALTH_PER_MINUTE_PER_POINT;
 }
 
 export function getGeneratorSpawnPeriodMs(track: MonsterGeneratorTrack, level: number): number {

@@ -164,6 +164,10 @@ export class TowerSystem {
             }
             const target = selectTowerTarget(tower, enemies, grid, geometry, towerFlowField);
             if (!target) {
+                // A ready tower stays ready while idle. Letting this value run
+                // negative creates a burst of one shot per simulation tick when
+                // a target eventually arrives.
+                tower.cooldownMs = 0;
                 continue;
             }
             const stats = getTowerStats(tower);

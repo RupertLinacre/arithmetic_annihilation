@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { SeededRandom } from '../../src/core/SeededRandom';
-import { OFFENSE_HEALTH_PER_MINUTE_PER_POINT } from '../../src/multiplayer/BalanceConfig';
+import {
+    INITIAL_ADVANCED_HEALTH_PER_MINUTE,
+    INITIAL_NIBBLE_HEALTH_PER_MINUTE,
+    OFFENSE_HEALTH_PER_MINUTE_PER_POINT,
+} from '../../src/multiplayer/BalanceConfig';
 import {
     chooseMonsterType,
     getExpectedMonsterHealth,
@@ -10,6 +14,7 @@ import {
     getGeneratorUpgradeDifficulty,
     getMonsterMix,
     getWrongAnswerNibbleLevelIncrease,
+    MAX_MONSTER_GENERATOR_LEVEL,
 } from '../../src/multiplayer/MonsterGenerator';
 
 describe('multiplayer monster generator progression', () => {
@@ -21,21 +26,24 @@ describe('multiplayer monster generator progression', () => {
         expect(getMonsterMix('advanced', 12).types).not.toContain('scout');
     });
 
-    it('adds a fixed amount of health per minute for every question-value point', () => {
-        expect(getGeneratorHealthPerMinute('nibble', 1)).toBe(OFFENSE_HEALTH_PER_MINUTE_PER_POINT);
-        expect(getGeneratorHealthPerMinute('nibble', 8)).toBe(OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 8);
-        expect(getGeneratorHealthPerMinute('advanced', 1)).toBe(OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 2);
-        expect(getGeneratorHealthPerMinute('advanced', 8)).toBe(OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 16);
+    it('uses a gentle Nibble unlock then adds a fixed amount per later question-value point', () => {
+        expect(getGeneratorHealthPerMinute('nibble', 1)).toBe(INITIAL_NIBBLE_HEALTH_PER_MINUTE);
+        expect(getGeneratorHealthPerMinute('nibble', 8)).toBe(INITIAL_NIBBLE_HEALTH_PER_MINUTE + OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 7);
+        expect(getGeneratorHealthPerMinute('advanced', 1)).toBe(INITIAL_ADVANCED_HEALTH_PER_MINUTE);
+        expect(getGeneratorHealthPerMinute('advanced', 8)).toBe(INITIAL_ADVANCED_HEALTH_PER_MINUTE + OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 14);
         expect(getGeneratorSpawnPeriodMs('nibble', 1)).toBeCloseTo(
-            getExpectedMonsterHealth('nibble', 1) * 60_000 / OFFENSE_HEALTH_PER_MINUTE_PER_POINT,
+            getExpectedMonsterHealth('nibble', 1) * 60_000 / INITIAL_NIBBLE_HEALTH_PER_MINUTE,
         );
+        expect(getGeneratorHealthPerMinute('advanced', 100)).toBe(INITIAL_ADVANCED_HEALTH_PER_MINUTE + OFFENSE_HEALTH_PER_MINUTE_PER_POINT * 198);
+        expect(getGeneratorSpawnPeriodMs('advanced', 100)).toBeGreaterThan(0);
+        expect(MAX_MONSTER_GENERATOR_LEVEL).toBe(Number.MAX_SAFE_INTEGER);
     });
 
     it('applies one third of the former Nibble rate increase for wrong answers', () => {
         expect(getWrongAnswerNibbleLevelIncrease(1)).toBeCloseTo(1 / 3);
         expect(getWrongAnswerNibbleLevelIncrease(2)).toBeCloseTo(2 / 3);
         expect(getGeneratorHealthPerMinute('nibble', getWrongAnswerNibbleLevelIncrease(1))).toBeCloseTo(
-            OFFENSE_HEALTH_PER_MINUTE_PER_POINT / 3,
+            INITIAL_NIBBLE_HEALTH_PER_MINUTE / 3,
         );
     });
 

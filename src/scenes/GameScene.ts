@@ -18,6 +18,7 @@ import {
     getWrongAnswerNibbleLevelIncrease,
     MAX_MONSTER_GENERATOR_LEVEL,
 } from '../multiplayer/MonsterGenerator';
+import { MULTIPLAYER_BASE_HEALTH } from '../multiplayer/BalanceConfig';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
 import { calculateTowerThreatCosts, createEmptyCostGrid, type CostGrid, getTowerStats } from '../pathfinding/ThreatMap';
 import { EnemySpawner, isGameDifficulty, type GameDifficulty } from '../systems/EnemySpawner';
@@ -342,7 +343,7 @@ export class GameScene extends Phaser.Scene {
     private airstrikeImpacts: AirstrikeImpactVisual[] = [];
     private pendingAirstrikes: PendingAirstrike[] = [];
     private baseHealth = GAME_CONFIG.baseHealth;
-    private baseHealthByTeam: Record<TeamId, number> = { solar: GAME_CONFIG.baseHealth, lunar: GAME_CONFIG.baseHealth };
+    private baseHealthByTeam: Record<TeamId, number> = { solar: MULTIPLAYER_BASE_HEALTH, lunar: MULTIPLAYER_BASE_HEALTH };
     private statsByTeam: Record<TeamId, MultiplayerStats> = {
         solar: { kills: 0, answered: 0, correctAnswers: 0 },
         lunar: { kills: 0, answered: 0, correctAnswers: 0 },
@@ -516,7 +517,7 @@ export class GameScene extends Phaser.Scene {
         this.explosions = [];
         this.airstrikeImpacts = [];
         this.pendingAirstrikes = [];
-        this.baseHealthByTeam = { solar: GAME_CONFIG.baseHealth, lunar: GAME_CONFIG.baseHealth };
+        this.baseHealthByTeam = { solar: MULTIPLAYER_BASE_HEALTH, lunar: MULTIPLAYER_BASE_HEALTH };
         this.statsByTeam = {
             solar: { kills: 0, answered: 0, correctAnswers: 0 },
             lunar: { kills: 0, answered: 0, correctAnswers: 0 },
@@ -1763,12 +1764,14 @@ export class GameScene extends Phaser.Scene {
 
     private updateHud(): void {
         const localHealth = this.isMultiplayer ? this.baseHealthByTeam[this.localTeamId] : this.baseHealth;
-        const healthPercent = Math.max(0, Math.min(1, localHealth / GAME_CONFIG.baseHealth));
+        const maximumHealth = this.isMultiplayer ? MULTIPLAYER_BASE_HEALTH : GAME_CONFIG.baseHealth;
+        const healthPercent = Math.max(0, Math.min(1, localHealth / maximumHealth));
         const baseHealthColor = this.formatBaseHealthColor(healthPercent);
         const hud = document.querySelector<HTMLElement>('#hud')!;
         document.querySelector('[data-stat="health"]')!.textContent = `${Math.ceil(localHealth)}`;
         document.querySelector<HTMLElement>('[data-stat="base-fill"]')!.style.transform = `scaleX(${healthPercent})`;
         document.querySelector<HTMLElement>('[data-stat="base-meter"]')!.setAttribute('aria-valuenow', `${Math.ceil(localHealth)}`);
+        document.querySelector<HTMLElement>('[data-stat="base-meter"]')!.setAttribute('aria-valuemax', `${maximumHealth}`);
         hud.style.setProperty('--base-health-color', baseHealthColor);
         document.querySelector('[data-stat="time"]')!.textContent = this.formatTime(this.elapsedMs);
         const localStats = this.isMultiplayer ? this.statsByTeam[this.localTeamId] : { kills: this.kills, answered: this.answered, correctAnswers: this.correctAnswers };

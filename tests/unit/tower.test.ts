@@ -72,10 +72,14 @@ describe('tower target selection', () => {
         expect(getMultiplayerTowerQuestionDifficulty('airstrike')).toBe('medium');
     });
 
-    it('keeps multiplayer spray and homing volleys readable at high levels', () => {
+    it('keeps multiplayer basic, spray, and homing volleys readable at high levels', () => {
+        const easyLevelTwo = getTowerStats({ type: 'easy', level: 2, teamId: 'solar' });
+        const easy = getTowerStats({ type: 'easy', level: TOWER_STATS.easy.length, teamId: 'solar' });
         const spray = getTowerStats({ type: 'spray', level: TOWER_STATS.spray.length, teamId: 'solar' });
         const missile = getTowerStats({ type: 'missile', level: TOWER_STATS.missile.length, teamId: 'lunar' });
 
+        expect(easyLevelTwo.cooldownMs).toBe(500);
+        expect(easy.cooldownMs).toBeGreaterThanOrEqual(500);
         expect(spray.cooldownMs).toBeGreaterThanOrEqual(700);
         expect(spray.pelletCount).toBeLessThanOrEqual(8);
         expect(missile.cooldownMs).toBeGreaterThanOrEqual(900);
@@ -85,9 +89,39 @@ describe('tower target selection', () => {
     it('does not apply multiplayer cadence caps to single-player towers', () => {
         const sprayLevel = TOWER_STATS.spray.length;
         const missileLevel = TOWER_STATS.missile.length;
+        const easyLevel = TOWER_STATS.easy.length;
 
+        expect(getTowerStats({ type: 'easy', level: easyLevel })).toEqual(TOWER_STATS.easy[easyLevel - 1]);
         expect(getTowerStats({ type: 'spray', level: sprayLevel })).toEqual(TOWER_STATS.spray[sprayLevel - 1]);
         expect(getTowerStats({ type: 'missile', level: missileLevel })).toEqual(TOWER_STATS.missile[missileLevel - 1]);
+    });
+
+    it('does not build up rapid-fire cooldown debt anywhere on the multiplayer basic-gun upgrade path', () => {
+        const grid = new Grid(8, 3, 'grass');
+        const flow = buildFlowField(grid, { x: 7, y: 1 }, createEmptyCostGrid(grid));
+        const center = cellCenter({ x: 3, y: 1 }, GAME_CONFIG.map);
+        const target = createEnemy(1, 'tank', center.x, center.y, 10, 'lunar');
+
+        for (let level = 1; level <= TOWER_STATS.easy.length; level += 1) {
+            const tower = createTower(level, 1, 1, 'easy', 'solar');
+            tower.level = level;
+            const system = new TowerSystem();
+            for (let elapsed = 0; elapsed < 10_000; elapsed += 40) {
+                system.update(40, [tower], [], grid, GAME_CONFIG.map, flow);
+            }
+            expect(tower.cooldownMs, `idle level ${level}`).toBe(0);
+
+            const shotTimes: number[] = [];
+            for (let elapsed = 0; elapsed <= 3_000; elapsed += 40) {
+                const result = system.update(40, [tower], [target], grid, GAME_CONFIG.map, flow);
+                if (result.projectiles.length > 0) shotTimes.push(elapsed);
+            }
+            expect(shotTimes[0], `first shot level ${level}`).toBe(0);
+            expect(shotTimes.length, `three-second volley count level ${level}`).toBeLessThanOrEqual(7);
+            for (let index = 1; index < shotTimes.length; index += 1) {
+                expect(shotTimes[index] - shotTimes[index - 1], `cadence level ${level}`).toBeGreaterThanOrEqual(480);
+            }
+        }
     });
 
     it('rotates flamethrowers and gives monsters infectious burns', () => {

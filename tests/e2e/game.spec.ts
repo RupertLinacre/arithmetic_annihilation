@@ -387,6 +387,8 @@ test('versus computer starts a local multiplayer battle with opponent visuals', 
     await expect(page.getByTestId('computer-match-button')).toBeVisible();
     await page.getByTestId('computer-match-button').click();
     await expect(page.locator('canvas')).toBeVisible();
+    await expect(page.locator('[data-stat="health"]')).toHaveText('150');
+    await expect(page.locator('[data-stat="base-meter"]')).toHaveAttribute('aria-valuemax', '150');
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.isComputerOpponent())).toBe(true);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
