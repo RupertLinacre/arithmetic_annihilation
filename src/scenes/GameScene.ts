@@ -140,23 +140,23 @@ const ENEMY_TEXTURES = {
     4: { run: SPRITE_PATHS.monster4Run, stop: SPRITE_PATHS.monster4Stop, hurt: SPRITE_PATHS.monster4Hurt },
 } as const;
 
-type TeamVisualRole = 'player' | 'opponent';
+type TeamColour = 'blue' | 'red';
 
-const TEAM_VISUALS: Record<TeamVisualRole, {
+const TEAM_VISUALS: Record<TeamColour, {
     texturePrefix: string;
     color: number;
     light: number;
     dark: number;
     cssColor: string;
 }> = {
-    player: {
+    blue: {
         texturePrefix: 'team-blue',
         color: 0x2878ff,
         light: 0x8bc5ff,
         dark: 0x103a80,
         cssColor: '#2878ff',
     },
-    opponent: {
+    red: {
         texturePrefix: 'team-red',
         color: 0xe3324f,
         light: 0xff9aaa,
@@ -165,19 +165,19 @@ const TEAM_VISUALS: Record<TeamVisualRole, {
     },
 };
 
-const GENERATED_TEAM_BASE_TEXTURES: Record<TeamVisualRole, string> = {
-    player: SPRITE_PATHS.teamBlueBase,
-    opponent: SPRITE_PATHS.teamRedBase,
+const GENERATED_TEAM_BASE_TEXTURES: Record<TeamColour, string> = {
+    blue: SPRITE_PATHS.teamBlueBase,
+    red: SPRITE_PATHS.teamRedBase,
 };
 
-const GENERATED_TEAM_ENEMY_TEXTURES: Record<TeamVisualRole, Record<EnemyTextureTier, string>> = {
-    player: {
+const GENERATED_TEAM_ENEMY_TEXTURES: Record<TeamColour, Record<EnemyTextureTier, string>> = {
+    blue: {
         1: SPRITE_PATHS.teamBlueMonster1,
         2: SPRITE_PATHS.teamBlueMonster2,
         3: SPRITE_PATHS.teamBlueMonster3,
         4: SPRITE_PATHS.teamBlueMonster4,
     },
-    opponent: {
+    red: {
         1: SPRITE_PATHS.teamRedMonster1,
         2: SPRITE_PATHS.teamRedMonster2,
         3: SPRITE_PATHS.teamRedMonster3,
@@ -185,15 +185,15 @@ const GENERATED_TEAM_ENEMY_TEXTURES: Record<TeamVisualRole, Record<EnemyTextureT
     },
 };
 
-const GENERATED_TEAM_TOWER_TEXTURES: Record<TeamVisualRole, Partial<Record<TowerType, string>>> = {
-    player: {
+const GENERATED_TEAM_TOWER_TEXTURES: Record<TeamColour, Partial<Record<TowerType, string>>> = {
+    blue: {
         easy: SPRITE_PATHS.teamBlueTowerBasic,
         spray: SPRITE_PATHS.teamBlueTowerSpray,
         missile: SPRITE_PATHS.teamBlueTowerMissile,
         cluster: SPRITE_PATHS.teamBlueTowerCluster,
         wall: SPRITE_PATHS.teamBlueWall,
     },
-    opponent: {
+    red: {
         easy: SPRITE_PATHS.teamRedTowerBasic,
         spray: SPRITE_PATHS.teamRedTowerSpray,
         missile: SPRITE_PATHS.teamRedTowerMissile,
@@ -361,9 +361,9 @@ export class GameScene extends Phaser.Scene {
     private nextComputerActionTick = 0;
     private computerActionIndex = 0;
     private computerBuildCursor = 0;
-    private teamTextureKeys: Record<TeamVisualRole, Map<string, string>> = {
-        player: new Map<string, string>(),
-        opponent: new Map<string, string>(),
+    private teamTextureKeys: Record<TeamColour, Map<string, string>> = {
+        blue: new Map<string, string>(),
+        red: new Map<string, string>(),
     };
     private teamBackdropGraphics?: Phaser.GameObjects.Graphics;
     private isMultiplayer = false;
@@ -809,7 +809,8 @@ export class GameScene extends Phaser.Scene {
             window.clearTimeout(this.placementWarningTimeoutId);
         }
         message.hidden = false;
-        message.textContent = "BLUE SIDE ONLY — you're blue, so build on your side of the map.";
+        const colour = this.getTeamColour(this.localTeamId);
+        message.textContent = `${colour.toUpperCase()} SIDE ONLY — you're ${colour}, so build on your side of the map.`;
         message.dataset.state = 'placement-warning';
         this.placementWarningTimeoutId = window.setTimeout(() => {
             this.placementWarningTimeoutId = undefined;
@@ -2365,7 +2366,7 @@ export class GameScene extends Phaser.Scene {
         if (this.isMultiplayer) {
             for (const teamId of TEAMS) {
                 const baseCenter = cellCenter(this.generatedMap.bases![teamId], GAME_CONFIG.map);
-                const textureKey = GENERATED_TEAM_BASE_TEXTURES[this.getTeamVisualRole(teamId)];
+                const textureKey = GENERATED_TEAM_BASE_TEXTURES[this.getTeamColour(teamId)];
                 const sprite = this.add.image(baseCenter.x, baseCenter.y, textureKey).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
                 this.baseSprites.set(teamId, sprite);
             }
@@ -2403,7 +2404,7 @@ export class GameScene extends Phaser.Scene {
     private getEnemyTextureKey(enemy: EnemyState): string {
         const tier = this.getEnemyTextureTier(enemy);
         if (this.isMultiplayer && enemy.teamId !== undefined) {
-            return GENERATED_TEAM_ENEMY_TEXTURES[this.getTeamVisualRole(enemy.teamId)][tier];
+            return GENERATED_TEAM_ENEMY_TEXTURES[this.getTeamColour(enemy.teamId)][tier];
         }
         const state = this.getEnemyTextureState(enemy);
         return this.getTeamTextureKey(ENEMY_TEXTURES[tier][state], enemy.teamId);
@@ -2411,7 +2412,7 @@ export class GameScene extends Phaser.Scene {
 
     private getTowerTextureKey(tower: TowerState): string {
         if (this.isMultiplayer && tower.teamId !== undefined) {
-            const generatedTexture = GENERATED_TEAM_TOWER_TEXTURES[this.getTeamVisualRole(tower.teamId)][tower.type];
+            const generatedTexture = GENERATED_TEAM_TOWER_TEXTURES[this.getTeamColour(tower.teamId)][tower.type];
             if (generatedTexture) {
                 return generatedTexture;
             }
@@ -2428,11 +2429,11 @@ export class GameScene extends Phaser.Scene {
             ...Object.values(TOWER_TEXTURES),
             ...Object.values(ENEMY_TEXTURES).flatMap((states) => Object.values(states)),
         ]);
-        for (const role of Object.keys(TEAM_VISUALS) as TeamVisualRole[]) {
-            const visual = TEAM_VISUALS[role];
+        for (const colour of Object.keys(TEAM_VISUALS) as TeamColour[]) {
+            const visual = TEAM_VISUALS[colour];
             for (const sourceKey of sourceKeys) {
                 const textureKey = `${visual.texturePrefix}:${sourceKey}`;
-                this.teamTextureKeys[role].set(sourceKey, textureKey);
+                this.teamTextureKeys[colour].set(sourceKey, textureKey);
                 if (this.textures.exists(textureKey)) {
                     continue;
                 }
@@ -2459,20 +2460,16 @@ export class GameScene extends Phaser.Scene {
         if (!this.isMultiplayer || teamId === undefined) {
             return sourceKey;
         }
-        const role = this.getTeamVisualRole(teamId);
-        return this.teamTextureKeys[role].get(sourceKey) ?? sourceKey;
+        const colour = this.getTeamColour(teamId);
+        return this.teamTextureKeys[colour].get(sourceKey) ?? sourceKey;
     }
 
-    private getTeamVisualRole(teamId?: TeamId): TeamVisualRole {
-        return this.isOpponentTeam(teamId) ? 'opponent' : 'player';
+    private getTeamColour(teamId?: TeamId): TeamColour {
+        return teamId === 'lunar' ? 'red' : 'blue';
     }
 
-    private getTeamVisual(teamId?: TeamId): typeof TEAM_VISUALS[TeamVisualRole] {
-        return TEAM_VISUALS[this.getTeamVisualRole(teamId)];
-    }
-
-    private isOpponentTeam(teamId?: TeamId): boolean {
-        return this.isMultiplayer && teamId !== undefined && teamId !== this.localTeamId;
+    private getTeamVisual(teamId?: TeamId): typeof TEAM_VISUALS[TeamColour] {
+        return TEAM_VISUALS[this.getTeamColour(teamId)];
     }
 
     private getEnemyTextureTier(enemy: EnemyState): EnemyTextureTier {

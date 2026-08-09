@@ -132,6 +132,10 @@ function setupModeScreen(): void {
         document.querySelector<HTMLElement>('[data-lobby-heading]')!.textContent = isHost ? 'Your game is ready' : 'Joining the game…';
     };
     const renderPlayers = () => {
+        const localIsBlue = multiplayerSession.localTeamId === 'solar';
+        const colourBanner = document.querySelector<HTMLElement>('[data-testid="lobby-team-colour-banner"]')!;
+        colourBanner.querySelector('strong')!.textContent = `You are ${localIsBlue ? 'blue' : 'red'}`;
+        colourBanner.querySelector('span')!.textContent = `Your opponent is ${localIsBlue ? 'red' : 'blue'}`;
         playersList.innerHTML = '';
         for (const teamId of ['solar', 'lunar'] as const) {
             const player = multiplayerSession.players.find((candidate) => candidate.teamId === teamId);
@@ -139,7 +143,8 @@ function setupModeScreen(): void {
             const isLocalPlayer = teamId === multiplayerSession.localTeamId;
             item.className = `lobby-player ${isLocalPlayer ? 'player' : 'opponent'}`;
             const side = document.createElement('span');
-            side.textContent = isLocalPlayer ? 'You · Blue' : 'Opponent · Red';
+            const colour = teamId === 'solar' ? 'Blue' : 'Red';
+            side.textContent = `${isLocalPlayer ? 'You' : 'Opponent'} · ${colour}`;
             const playerName = document.createElement('strong');
             playerName.textContent = player?.name ?? 'Waiting for player…';
             item.append(side, playerName);

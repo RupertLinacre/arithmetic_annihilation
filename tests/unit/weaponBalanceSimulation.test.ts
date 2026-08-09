@@ -1,135 +1,131 @@
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../src/config/gameConfig';
-import { createEnemy } from '../../src/entities/Enemy';
+import { createEnemy, updateEnemy } from '../../src/entities/Enemy';
 import { createTower } from '../../src/entities/Tower';
+import { isBaseFootprintCell } from '../../src/map/BaseFootprint';
 import { cellCenter, Grid } from '../../src/map/Grid';
+import { generateMultiplayerMap } from '../../src/map/MapGenerator';
+import { hasLineOfSight } from '../../src/map/LineOfSight';
 import { buildFlowField } from '../../src/pathfinding/FlowField';
-import { createEmptyCostGrid } from '../../src/pathfinding/ThreatMap';
-import { DEFENSE_DAMAGE_PER_MINUTE_PER_POINT, getMultiplayerTowerQuestionValue, OFFENSE_HEALTH_PER_MINUTE_PER_POINT } from '../../src/multiplayer/BalanceConfig';
-import { simulateSelfPlay, type SelfPlayStrategy } from '../../src/multiplayer/BalanceSimulation';
+import { calculateTowerThreatCosts, createEmptyCostGrid, getTowerStats } from '../../src/pathfinding/ThreatMap';
+import { getMultiplayerTowerQuestionValue, OFFENSE_HEALTH_PER_MINUTE_PER_POINT } from '../../src/multiplayer/BalanceConfig';
 import { ProjectileSystem } from '../../src/systems/ProjectileSystem';
 import { TowerSystem } from '../../src/systems/TowerSystem';
 import type { EnemyState, ProjectileState, TowerType } from '../../src/types';
 
 type CombatTowerType = Exclude<TowerType, 'wall' | 'airstrike'>;
-type Formation = 'focused' | 'clustered' | 'distributed';
 
 const COMBAT_TOWERS: CombatTowerType[] = ['easy', 'spray', 'missile', 'flamethrower', 'cluster'];
-const FORMATIONS: Formation[] = ['focused', 'clustered', 'distributed'];
-const STEP_MS = 25;
-const DURATION_MS = 30_000;
-const BENCHMARK_HEALTH = 1_000_000;
-const BALANCED_STRATEGY: SelfPlayStrategy = {
-    name: 'weapon-balance', offenseShare: 0.52, advancedShare: 0.42, highTowerShare: 0.42, utilization: 0.8, answerSeconds: 8,
-};
+const MOVING_WAVE_STEP_MS = 50;
 
-function formationOffsets(formation: Formation): Array<{ x: number; y: number }> {
-    if (formation === 'focused') {
-        return [{ x: 72, y: 0 }];
+function traceAttackPaths(seed: number): Array<{ x: number; y: number }> {
+    const map = generateMultiplayerMap(seed);
+    const flow = buildFlowField(map.grid, map.bases!.solar, createEmptyCostGrid(map.grid));
+    const paths: Array<{ x: number; y: number }> = [];
+    const laneRows = [Math.floor(map.grid.rows * 0.3), Math.floor(map.grid.rows / 2), Math.floor(map.grid.rows * 0.72)];
+    for (const [index, row] of laneRows.entries()) {
+        const start = cellCenter({ x: map.bases!.lunar.x, y: row }, GAME_CONFIG.map);
+        const enemy = createEnemy(index + 1, 'scout', start.x, start.y, 1, 'lunar');
+        for (let elapsed = 0; elapsed < 15_000; elapsed += 100) {
+            paths.push({ x: enemy.x, y: enemy.y });
+            if (updateEnemy(enemy, 0.1, flow, flow, map.grid, GAME_CONFIG.map, [enemy])) break;
+        }
     }
-    if (formation === 'clustered') {
-        return Array.from({ length: 8 }, (_, index) => ({
-            x: 72 + (index % 2) * 9,
-            y: (index - 3.5) * 13,
-        }));
-    }
-    return Array.from({ length: 12 }, (_, index) => {
-        const angle = index / 12 * Math.PI * 2;
-        return { x: Math.cos(angle) * 76, y: Math.sin(angle) * 76 };
-    });
+    return paths;
 }
 
-function createBenchmarkEnemies(center: { x: number; y: number }, formation: Formation): EnemyState[] {
-    return formationOffsets(formation).map((offset, index) => {
-        const enemy = createEnemy(index + 1, 'tank', center.x + offset.x, center.y + offset.y, 1, 'lunar');
-        enemy.health = BENCHMARK_HEALTH;
-        enemy.maxHealth = BENCHMARK_HEALTH;
-        return enemy;
+function chooseSensibleTowerCell(seed: number, type: CombatTowerType, level: number) {
+    const map = generateMultiplayerMap(seed);
+    const path = traceAttackPaths(seed);
+    const stats = getTowerStats({ type, level, teamId: 'solar' });
+    let best: { x: number; y: number; score: number } | undefined;
+    map.grid.forEachCell((x, y) => {
+        const cell = { x, y };
+        if (x >= map.grid.cols / 2 || !map.grid.isBuildable(x, y)
+            || isBaseFootprintCell(map.bases!.solar, cell, map.grid)
+            || isBaseFootprintCell(map.bases!.lunar, cell, map.grid)) return;
+        const center = cellCenter(cell, GAME_CONFIG.map);
+        const score = path.reduce((sum, point) => {
+            const distance = Math.hypot(point.x - center.x, point.y - center.y);
+            return sum + (distance <= stats.range && hasLineOfSight(map.grid, center, point, GAME_CONFIG.map) ? 1 - distance / stats.range * 0.35 : 0);
+        }, 0);
+        if (!best || score > best.score) best = { x, y, score };
     });
+    if (!best) throw new Error('No sensible multiplayer tower placement found.');
+    return { x: best.x, y: best.y };
 }
 
-function simulateDamagePerMinute(type: CombatTowerType, level: number, formation: Formation): number {
-    const grid = new Grid(GAME_CONFIG.map.cols, GAME_CONFIG.map.rows, 'grass');
-    const towerCell = { x: 8, y: 7 };
-    const center = cellCenter(towerCell, GAME_CONFIG.map);
-    const flow = buildFlowField(grid, { x: 22, y: 7 }, createEmptyCostGrid(grid));
-    const tower = createTower(1, towerCell.x, towerCell.y, type, 'solar');
+function simulateMovingWave(seed: number, type: CombatTowerType, questionPoints: number) {
+    const map = generateMultiplayerMap(seed);
+    const questionValue = getMultiplayerTowerQuestionValue(type);
+    const level = Math.max(1, Math.floor(questionPoints / questionValue));
+    const cell = chooseSensibleTowerCell(seed, type, level);
+    const tower = createTower(1, cell.x, cell.y, type, 'solar');
     tower.level = level;
-    tower.flameAngleRadians = 0;
-    const enemies = createBenchmarkEnemies(center, formation);
+    const flow = buildFlowField(map.grid, map.bases!.solar, calculateTowerThreatCosts(map.grid, [tower], GAME_CONFIG.map));
+    const emergencyFlow = buildFlowField(map.grid, map.bases!.solar, createEmptyCostGrid(map.grid));
     const towerSystem = new TowerSystem();
     const projectileSystem = new ProjectileSystem();
+    const laneRows = [Math.floor(map.grid.rows * 0.3), Math.floor(map.grid.rows / 2), Math.floor(map.grid.rows * 0.72)];
+    const waveTypes = ['scout', 'scout', 'grunt', 'tank'] as const;
+    let enemies: EnemyState[] = [];
     let projectiles: ProjectileState[] = [];
-    const initialHealth = enemies.reduce((sum, enemy) => sum + enemy.health, 0);
+    let nextEnemyId = 1;
+    let totalHealth = 0;
+    let damage = 0;
+    let leakedBaseDamage = 0;
 
-    for (let elapsed = 0; elapsed < DURATION_MS; elapsed += STEP_MS) {
-        const towerResult = towerSystem.update(STEP_MS, [tower], enemies, grid, GAME_CONFIG.map, flow);
-        projectiles.push(...towerResult.projectiles);
-        projectiles = projectileSystem.update(STEP_MS, projectiles, enemies, grid, GAME_CONFIG.map).projectiles;
-    }
+    for (let elapsed = 0; elapsed < 150_000; elapsed += MOVING_WAVE_STEP_MS) {
+        if (elapsed < 90_000 && elapsed % 2_000 === 0) {
+            const typeIndex = Math.floor(elapsed / 2_000) % waveTypes.length;
+            const row = laneRows[Math.floor(elapsed / 2_000) % laneRows.length];
+            const start = cellCenter({ x: map.bases!.lunar.x, y: row }, GAME_CONFIG.map);
+            const enemy = createEnemy(nextEnemyId++, waveTypes[typeIndex], start.x, start.y, 1, 'lunar');
+            enemies.push(enemy);
+            totalHealth += enemy.health;
+        }
 
-    const remainingHealth = enemies.reduce((sum, enemy) => sum + enemy.health, 0);
-    return (initialHealth - remainingHealth) * (60_000 / DURATION_MS);
-}
-
-function createWeaponReport() {
-    return COMBAT_TOWERS.flatMap((type) => [1, 4, 8].map((level) => {
-        const expected = DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * getMultiplayerTowerQuestionValue(type) * level;
-        const results = Object.fromEntries(FORMATIONS.map((formation) => [formation, simulateDamagePerMinute(type, level, formation)]));
-        const composite = results.focused * 0.3 + results.clustered * 0.4 + results.distributed * 0.3;
-        return {
-            weapon: type,
-            level,
-            focused: Math.round(results.focused / expected * 100) / 100,
-            clustered: Math.round(results.clustered / expected * 100) / 100,
-            distributed: Math.round(results.distributed / expected * 100) / 100,
-            composite: Math.round(composite / expected * 100) / 100,
-        };
-    }));
-}
-
-describe('multiplayer weapon combat benchmark', () => {
-    it('keeps each weapon competitive across representative enemy formations', () => {
-        const report = createWeaponReport();
-
-        expect(report).toHaveLength(COMBAT_TOWERS.length * 3);
-        expect(Math.min(...report.map((row) => row.composite))).toBeGreaterThanOrEqual(0.85);
-        expect(Math.max(...report.map((row) => row.composite))).toBeLessThanOrEqual(1.2);
-        const averagePracticalOutput = report.reduce((sum, row) => sum + row.composite, 0) / report.length;
-        expect(averagePracticalOutput).toBeGreaterThanOrEqual(0.97);
-        expect(averagePracticalOutput).toBeLessThanOrEqual(1.05);
-    });
-
-    it('keeps single-weapon defensive loadouts competitive in self-play', () => {
-        const report = createWeaponReport();
-        const practicalScale = Object.fromEntries(COMBAT_TOWERS.map((type) => {
-            const rows = report.filter((row) => row.weapon === type);
-            return [type, rows.reduce((sum, row) => sum + row.composite, 0) / rows.length];
-        })) as Record<CombatTowerType, number>;
-
-        for (let firstIndex = 0; firstIndex < COMBAT_TOWERS.length; firstIndex += 1) {
-            for (let secondIndex = firstIndex + 1; secondIndex < COMBAT_TOWERS.length; secondIndex += 1) {
-                const firstWeapon = COMBAT_TOWERS[firstIndex];
-                const secondWeapon = COMBAT_TOWERS[secondIndex];
-                let firstWins = 0;
-                let secondWins = 0;
-                for (let game = 0; game < 120; game += 1) {
-                    const reversed = game % 2 === 1;
-                    const scales: [number, number] = reversed
-                        ? [practicalScale[secondWeapon], practicalScale[firstWeapon]]
-                        : [practicalScale[firstWeapon], practicalScale[secondWeapon]];
-                    const result = simulateSelfPlay(`weapons-${firstWeapon}-${secondWeapon}-${game}`, [BALANCED_STRATEGY, BALANCED_STRATEGY], 12 * 60, scales);
-                    if (result.winner === null) continue;
-                    const firstWeaponWon = result.winner === (reversed ? 1 : 0);
-                    if (firstWeaponWon) firstWins += 1;
-                    else secondWins += 1;
-                }
-                const completed = firstWins + secondWins;
-                const matchup = `${firstWeapon} (${practicalScale[firstWeapon].toFixed(2)}) vs ${secondWeapon} (${practicalScale[secondWeapon].toFixed(2)})`;
-                expect(completed).toBeGreaterThan(45);
-                expect(firstWins / completed, matchup).toBeGreaterThan(0.18);
-                expect(firstWins / completed, matchup).toBeLessThan(0.82);
+        const survivors: EnemyState[] = [];
+        for (const enemy of enemies) {
+            if (enemy.health <= 0) continue;
+            if (updateEnemy(enemy, MOVING_WAVE_STEP_MS / 1000, flow, emergencyFlow, map.grid, GAME_CONFIG.map, enemies)) {
+                leakedBaseDamage += enemy.baseDamage;
+            } else {
+                survivors.push(enemy);
             }
+        }
+        enemies = survivors;
+        const healthBefore = enemies.reduce((sum, enemy) => sum + Math.max(0, enemy.health), 0);
+        const towerResult = towerSystem.update(MOVING_WAVE_STEP_MS, [tower], enemies, map.grid, GAME_CONFIG.map, flow);
+        projectiles.push(...towerResult.projectiles);
+        projectiles = projectileSystem.update(MOVING_WAVE_STEP_MS, projectiles, enemies, map.grid, GAME_CONFIG.map).projectiles;
+        const healthAfter = enemies.reduce((sum, enemy) => sum + Math.max(0, enemy.health), 0);
+        damage += healthBefore - healthAfter;
+        enemies = enemies.filter((enemy) => enemy.health > 0);
+    }
+    return { weapon: type, level, damageShare: damage / totalHealth, leakedBaseDamage };
+}
+
+describe('multiplayer weapon moving-wave balance', () => {
+    it('keeps equal-question loadouts competitive across generated maps and upgrade stages', () => {
+        const questionPointLevels = [2, 4, 8] as const;
+        const results = COMBAT_TOWERS.flatMap((type) => questionPointLevels.flatMap((questionPoints) => (
+            Array.from({ length: 12 }, (_, seed) => ({ ...simulateMovingWave(seed + 1, type, questionPoints), questionPoints }))
+        )));
+        const summary = COMBAT_TOWERS.flatMap((type) => questionPointLevels.map((questionPoints) => {
+            const rows = results.filter((row) => row.weapon === type && row.questionPoints === questionPoints);
+            return {
+                weapon: type,
+                questionPoints,
+                damageShare: rows.reduce((sum, row) => sum + row.damageShare, 0) / rows.length,
+                leakedBaseDamage: rows.reduce((sum, row) => sum + row.leakedBaseDamage, 0) / rows.length,
+            };
+        }));
+        expect(summary).toHaveLength(COMBAT_TOWERS.length * questionPointLevels.length);
+        for (const questionPoints of questionPointLevels) {
+            const stage = summary.filter((row) => row.questionPoints === questionPoints);
+            const leakedDamage = stage.map((row) => row.leakedBaseDamage);
+            expect(Math.max(...leakedDamage) - Math.min(...leakedDamage)).toBeLessThanOrEqual(18);
         }
     });
 

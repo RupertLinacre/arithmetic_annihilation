@@ -439,9 +439,11 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await guest.locator('[name="player-name"]').fill('Guest');
     await guest.locator('[name="invite-code"]').fill(code);
     await guest.getByTestId('join-match-button').click();
-    await expect(guest.getByTestId('lobby-team-colour-banner')).toContainText('You are blue');
+    await expect(guest.getByTestId('lobby-team-colour-banner')).toContainText('You are red');
     await expect(host.locator('.lobby-player.player span')).toHaveText('You · Blue');
-    await expect(guest.locator('.lobby-player.player span')).toHaveText('You · Blue');
+    await expect(host.locator('.lobby-player.opponent span')).toHaveText('Opponent · Red');
+    await expect(guest.locator('.lobby-player.player span')).toHaveText('You · Red');
+    await expect(guest.locator('.lobby-player.opponent span')).toHaveText('Opponent · Blue');
 
     await expect(host.locator('[data-start-match]')).toBeEnabled({ timeout: 20_000 });
     await host.locator('[data-start-match]').click();
@@ -461,10 +463,15 @@ test('two players share scheduled actions and continue simulating locally', asyn
     const guestBases = await guest.evaluate(() => window.arithmeticAnnihilation!.getBaseTextureKeys());
     expect(hostBases.solar).toBe('sprites/generated/base_blue.png');
     expect(hostBases.lunar).toBe('sprites/generated/base_red.png');
-    expect(guestBases.solar).toBe('sprites/generated/base_red.png');
-    expect(guestBases.lunar).toBe('sprites/generated/base_blue.png');
+    expect(guestBases.solar).toBe('sprites/generated/base_blue.png');
+    expect(guestBases.lunar).toBe('sprites/generated/base_red.png');
 
     await expect.poll(() => guest.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+    const guestOpponentCell = await guest.evaluate(() => window.arithmeticAnnihilation!.getOpponentHalfCell());
+    expect(guestOpponentCell).not.toBeNull();
+    await clickWorldPoint(guest, guestOpponentCell!.worldX, guestOpponentCell!.worldY);
+    await expect(guest.getByTestId('game-status-message')).toHaveText("RED SIDE ONLY — you're red, so build on your side of the map.");
+
     const guestCell = await guest.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
     expect(guestCell).not.toBeNull();
     expect(guestCell!.x).toBeGreaterThanOrEqual(12);
@@ -474,6 +481,8 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await guest.getByTestId('answer-input').fill(answer!);
     await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(1);
     await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getTowerCount()), { timeout: 20_000 }).toBe(1);
+    expect(await host.evaluate(() => window.arithmeticAnnihilation!.getTowerTextureKeys())).toEqual(['sprites/generated/tower_red_basic.png']);
+    expect(await guest.evaluate(() => window.arithmeticAnnihilation!.getTowerTextureKeys())).toEqual(['sprites/generated/tower_red_basic.png']);
 
     const hostCell = await host.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
     expect(hostCell).not.toBeNull();

@@ -4,10 +4,10 @@ import { createEnemy } from '../../src/entities/Enemy';
 import { calculateTotalTowerDamagePerSecond, calculateTowerDamagePerSecond, canUpgradeTower, createTower, selectTowerTarget } from '../../src/entities/Tower';
 import { cellCenter, Grid } from '../../src/map/Grid';
 import { buildFlowField } from '../../src/pathfinding/FlowField';
-import { createEmptyCostGrid } from '../../src/pathfinding/ThreatMap';
+import { createEmptyCostGrid, getTowerStats } from '../../src/pathfinding/ThreatMap';
 import { TowerSystem } from '../../src/systems/TowerSystem';
 import type { TowerState } from '../../src/types';
-import { DEFENSE_DAMAGE_PER_MINUTE_PER_POINT, getMultiplayerTowerQuestionDifficulty, MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER } from '../../src/multiplayer/BalanceConfig';
+import { DEFENSE_DAMAGE_PER_MINUTE_PER_POINT, getMultiplayerTowerQuestionDifficulty, getMultiplayerWeaponDamageMultiplier } from '../../src/multiplayer/BalanceConfig';
 
 describe('tower target selection', () => {
     it('targets the enemy closest to the base among valid enemies', () => {
@@ -58,18 +58,36 @@ describe('tower target selection', () => {
         for (const type of ['easy', 'spray', 'flamethrower'] as const) {
             for (const level of [1, 2, 3, 8]) {
                 expect(calculateTowerDamagePerSecond({ type, level, teamId: 'solar' }) * 60)
-                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * level * MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER[type]);
+                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * level * getMultiplayerWeaponDamageMultiplier(type, level));
             }
             expect(getMultiplayerTowerQuestionDifficulty(type)).toBe('easy');
         }
         for (const type of ['missile', 'cluster'] as const) {
             for (const level of [1, 2, 3, 8]) {
                 expect(calculateTowerDamagePerSecond({ type, level, teamId: 'lunar' }) * 60)
-                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * 2 * level * MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER[type]);
+                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * 2 * level * getMultiplayerWeaponDamageMultiplier(type, level));
             }
             expect(getMultiplayerTowerQuestionDifficulty(type)).toBe('medium');
         }
         expect(getMultiplayerTowerQuestionDifficulty('airstrike')).toBe('medium');
+    });
+
+    it('keeps multiplayer spray and homing volleys readable at high levels', () => {
+        const spray = getTowerStats({ type: 'spray', level: TOWER_STATS.spray.length, teamId: 'solar' });
+        const missile = getTowerStats({ type: 'missile', level: TOWER_STATS.missile.length, teamId: 'lunar' });
+
+        expect(spray.cooldownMs).toBeGreaterThanOrEqual(700);
+        expect(spray.pelletCount).toBeLessThanOrEqual(8);
+        expect(missile.cooldownMs).toBeGreaterThanOrEqual(900);
+        expect(missile.missileCount).toBeLessThanOrEqual(4);
+    });
+
+    it('does not apply multiplayer cadence caps to single-player towers', () => {
+        const sprayLevel = TOWER_STATS.spray.length;
+        const missileLevel = TOWER_STATS.missile.length;
+
+        expect(getTowerStats({ type: 'spray', level: sprayLevel })).toEqual(TOWER_STATS.spray[sprayLevel - 1]);
+        expect(getTowerStats({ type: 'missile', level: missileLevel })).toEqual(TOWER_STATS.missile[missileLevel - 1]);
     });
 
     it('rotates flamethrowers and gives monsters infectious burns', () => {
