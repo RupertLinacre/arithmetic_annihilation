@@ -158,6 +158,31 @@
   cursor: pointer;
 }
 
+.team-colour-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 2px solid #75b7ff;
+  border-radius: 9px;
+  background: linear-gradient(105deg, rgba(40, 120, 255, 0.42), rgba(40, 120, 255, 0.16));
+  box-shadow: 0 0 0 3px rgba(40, 120, 255, 0.12);
+}
+
+.team-colour-banner strong {
+  color: #ffffff;
+  font-size: 21px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.team-colour-banner span {
+  color: #ffb2be;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .invite-code-panel {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -206,8 +231,18 @@
   font-size: 12px;
 }
 
-.lobby-player.solar strong { color: var(--amber); }
-.lobby-player.lunar strong { color: #7ee7ff; }
+.lobby-player.player {
+  border-color: rgba(117, 183, 255, 0.65);
+  background: rgba(40, 120, 255, 0.1);
+}
+
+.lobby-player.opponent {
+  border-color: rgba(227, 50, 79, 0.6);
+  background: rgba(227, 50, 79, 0.08);
+}
+
+.lobby-player.player strong { color: #8fc6ff; }
+.lobby-player.opponent strong { color: #ff9aaa; }
 
 .monster-generator-button {
   position: relative;
@@ -1280,6 +1315,19 @@ html.is-mobile .multiplayer-setup {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 8px;
   margin-top: 7px;
+}
+
+html.is-mobile .team-colour-banner {
+  padding: 6px 9px;
+  border-width: 2px;
+}
+
+html.is-mobile .team-colour-banner strong {
+  font-size: 16px;
+}
+
+html.is-mobile .team-colour-banner span {
+  font-size: 11px;
 }
 
 html.is-mobile .multiplayer-setup label {

@@ -149,8 +149,9 @@ export class TowerSystem {
             if (isWallTower(tower) || tower.type === 'airstrike') {
                 continue;
             }
+            const towerFlowField = typeof flowField === 'function' ? flowField(tower) : flowField;
             if (tower.type === 'flamethrower') {
-                const result = this.updateFlamethrower(tower, deltaMs, enemies, grid, geometry);
+                const result = this.updateFlamethrower(tower, deltaMs, enemies, grid, geometry, towerFlowField);
                 kills += result.kills;
                 hurtSounds += result.hurtSounds;
                 deathSounds += result.deathSounds;
@@ -161,7 +162,7 @@ export class TowerSystem {
             if (tower.cooldownMs > 0) {
                 continue;
             }
-            const target = selectTowerTarget(tower, enemies, grid, geometry, typeof flowField === 'function' ? flowField(tower) : flowField);
+            const target = selectTowerTarget(tower, enemies, grid, geometry, towerFlowField);
             if (!target) {
                 continue;
             }
@@ -209,7 +210,7 @@ export class TowerSystem {
                 projectile.fragmentDamage = stats.fragmentDamage;
                 projectiles.push(projectile);
             }
-            tower.cooldownMs = stats.cooldownMs;
+            tower.cooldownMs = tower.teamId === undefined ? stats.cooldownMs : tower.cooldownMs + stats.cooldownMs;
             shotsFired += 1;
         }
         return { projectiles, shotsFired, kills, explosions, flameJets, hurtSounds, deathSounds, detonatedTowerIds };
@@ -236,6 +237,10 @@ export class TowerSystem {
                 continue;
             }
             const spreadRadius = enemy.burnSpreadRadius ?? 0;
+            if (spreadRadius <= 0) {
+                enemy.burnSpreadCooldownMs = 260;
+                continue;
+            }
             for (const other of enemies) {
                 if (other.id === enemy.id || other.health <= 0 || (other.burnMs ?? 0) > 0 || other.teamId !== enemy.teamId) {
                     continue;
@@ -251,37 +256,50 @@ export class TowerSystem {
         return { kills, hurtSounds, deathSounds };
     }
 
-    private updateFlamethrower(tower: TowerState, deltaMs: number, enemies: EnemyState[], grid: Grid, geometry: MapGeometry): { kills: number; hurtSounds: number; deathSounds: number; flameJet: FlameJet } {
+    private updateFlamethrower(tower: TowerState, deltaMs: number, enemies: EnemyState[], grid: Grid, geometry: MapGeometry, flowField: FlowField): { kills: number; hurtSounds: number; deathSounds: number; flameJet: FlameJet } {
         const stats = getTowerStats(tower);
         const center = cellCenter({ x: tower.gridX, y: tower.gridY }, geometry);
         const rotateRate = stats.flameRotateRate ?? 1;
         const arcRadians = stats.flameArcRadians ?? 0.46;
-        const angle = (tower.flameAngleRadians ?? (tower.id * 1.73) % (Math.PI * 2)) + rotateRate * (deltaMs / 1000);
+        const previousAngle = tower.flameAngleRadians ?? (tower.id * 1.73) % (Math.PI * 2);
+        const target = tower.teamId === undefined ? undefined : selectTowerTarget(tower, enemies, grid, geometry, flowField);
+        const desiredAngle = target ? Math.atan2(target.y - center.y, target.x - center.x) : previousAngle + Math.PI;
+        const maxTurn = rotateRate * (deltaMs / 1000);
+        const angle = tower.teamId === undefined
+            ? previousAngle + maxTurn
+            : previousAngle + clamp(angleDifference(desiredAngle, previousAngle), -maxTurn, maxTurn);
         tower.flameAngleRadians = angle % (Math.PI * 2);
 
         let kills = 0;
         let hurtSounds = 0;
         let deathSounds = 0;
-        for (const enemy of enemies) {
+        const affectedEnemies = enemies.filter((enemy) => {
             if (enemy.health <= 0 || (tower.teamId !== undefined && enemy.teamId === tower.teamId)) {
-                continue;
+                return false;
             }
             const dx = enemy.x - center.x;
             const dy = enemy.y - center.y;
             const distance = Math.hypot(dx, dy);
             if (distance > stats.range + enemy.radius) {
-                continue;
+                return false;
             }
             const enemyAngle = Math.atan2(dy, dx);
-            if (Math.abs(angleDifference(enemyAngle, tower.flameAngleRadians)) > arcRadians * 0.5) {
-                continue;
+            if (Math.abs(angleDifference(enemyAngle, angle)) > arcRadians * 0.5) {
+                return false;
             }
-            if (!hasLineOfSight(grid, center, { x: enemy.x, y: enemy.y }, geometry)) {
-                continue;
-            }
+            return hasLineOfSight(grid, center, { x: enemy.x, y: enemy.y }, geometry);
+        });
+        const multiplayerDamageShare = tower.teamId === undefined || affectedEnemies.length === 0
+            ? 1
+            : Math.min(1, 1.5 / affectedEnemies.length);
+        for (const enemy of affectedEnemies) {
+            const dx = enemy.x - center.x;
+            const dy = enemy.y - center.y;
+            const distance = Math.hypot(dx, dy);
             const falloff = 1 - Math.max(0, distance - enemy.radius) / stats.range * 0.42;
-            hurtSounds += igniteEnemy(enemy, stats.burnDamagePerSecond ?? stats.damage * 0.3, stats.burnDurationMs ?? 1700, stats.burnSpreadRadius ?? 36) ? 1 : 0;
-            if (applyDamage(enemy, stats.damage * falloff * (deltaMs / 1000))) {
+            const burnSpreadRadius = tower.teamId === undefined ? stats.burnSpreadRadius ?? 36 : 0;
+            hurtSounds += igniteEnemy(enemy, (stats.burnDamagePerSecond ?? stats.damage * 0.3) * multiplayerDamageShare, stats.burnDurationMs ?? 1700, burnSpreadRadius) ? 1 : 0;
+            if (applyDamage(enemy, stats.damage * multiplayerDamageShare * falloff * (deltaMs / 1000))) {
                 kills += 1;
                 deathSounds += 1;
             }

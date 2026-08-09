@@ -4,6 +4,18 @@ import type { TowerDifficulty, TowerState, TowerType } from '../types';
 export const OFFENSE_HEALTH_PER_MINUTE_PER_POINT = 480;
 export const DEFENSE_DAMAGE_PER_MINUTE_PER_POINT = 540;
 
+// Multiplayer-only practical corrections. Spray recovers ordinary pellet misses;
+// area weapons are discounted because their damage can affect several monsters.
+export const MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER: Record<TowerType, number> = {
+    easy: 1,
+    spray: 1.1,
+    missile: 1,
+    flamethrower: 0.92,
+    cluster: 0.74,
+    wall: 1,
+    airstrike: 1,
+};
+
 const HIGH_VALUE_TOWERS = new Set<TowerType>(['missile', 'cluster', 'airstrike']);
 
 export function getMultiplayerTowerQuestionValue(type: TowerType): 1 | 2 {
@@ -20,7 +32,11 @@ function scaleCombatStats(type: TowerType, level: number, source: TowerLevelStat
     }
 
     const questionValue = getMultiplayerTowerQuestionValue(type);
-    const targetDamagePerSecond = DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * questionValue * level / 60;
+    const targetDamagePerSecond = DEFENSE_DAMAGE_PER_MINUTE_PER_POINT
+        * questionValue
+        * level
+        * MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER[type]
+        / 60;
     if (type === 'flamethrower') {
         return {
             ...source,

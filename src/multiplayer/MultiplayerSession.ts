@@ -25,6 +25,7 @@ type WireMessage =
     | { kind: 'error'; message: string };
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const INVITE_CODE_LENGTH = 4;
 
 function createLocalId(): string {
     if (typeof crypto.randomUUID === 'function') {
@@ -35,7 +36,7 @@ function createLocalId(): string {
 }
 
 export function createInviteCode(): string {
-    return Array.from({ length: 6 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
+    return Array.from({ length: INVITE_CODE_LENGTH }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
 }
 
 class MultiplayerSession {

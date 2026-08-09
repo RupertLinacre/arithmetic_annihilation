@@ -404,8 +404,7 @@ test('versus computer starts a local multiplayer battle with opponent visuals', 
     expect(visualKeys.bases.lunar).toBe('sprites/generated/base_red.png');
     expect(visualKeys.towers.every((key) => key.startsWith('sprites/generated/tower_red_'))).toBe(true);
     expect(visualKeys.enemies.every((key) => key.startsWith('sprites/generated/monster_red_'))).toBe(true);
-    await expect(page.getByText('YOU · BLUE')).toHaveCount(0);
-    await expect(page.getByText('OPPONENT · RED')).toHaveCount(0);
+    await expect(page.getByTestId('lobby-team-colour-banner')).toBeHidden();
 
     const opponentCell = await page.evaluate(() => window.arithmeticAnnihilation!.getOpponentHalfCell());
     expect(opponentCell).not.toBeNull();
@@ -428,15 +427,21 @@ test('two players share scheduled actions and continue simulating locally', asyn
 
     await host.goto('/');
     await host.getByTestId('two-player-button').click();
+    await expect(host.getByTestId('lobby-team-colour-banner')).toBeHidden();
     await host.getByTestId('create-match-button').click();
+    await expect(host.getByTestId('lobby-team-colour-banner')).toContainText('You are blue');
     const code = (await host.locator('[data-invite-code]').textContent())!.trim();
-    expect(code).toMatch(/^[A-Z2-9]{6}$/);
+    expect(code).toMatch(/^[A-Z2-9]{4}$/);
 
     await guest.goto('/');
     await guest.getByTestId('two-player-button').click();
+    await expect(guest.getByTestId('lobby-team-colour-banner')).toBeHidden();
     await guest.locator('[name="player-name"]').fill('Guest');
     await guest.locator('[name="invite-code"]').fill(code);
     await guest.getByTestId('join-match-button').click();
+    await expect(guest.getByTestId('lobby-team-colour-banner')).toContainText('You are blue');
+    await expect(host.locator('.lobby-player.player span')).toHaveText('You · Blue');
+    await expect(guest.locator('.lobby-player.player span')).toHaveText('You · Blue');
 
     await expect(host.locator('[data-start-match]')).toBeEnabled({ timeout: 20_000 });
     await host.locator('[data-start-match]').click();

@@ -130,11 +130,11 @@ function spawnMonsters(attacker: SimPlayer, defender: SimPlayer, now: number, de
     }
 }
 
-function defend(player: SimPlayer, strategy: SelfPlayStrategy, now: number, deltaSeconds: number, rng: SeededRandom): void {
+function defend(player: SimPlayer, strategy: SelfPlayStrategy, now: number, deltaSeconds: number, rng: SeededRandom, defenseScale: number): void {
     player.incoming.sort((a, b) => a.baseAt - b.baseAt);
     const active = player.incoming.filter((batch) => batch.engageAt <= now && batch.baseAt > now && batch.health > 0);
     const momentaryUtilization = clamp(strategy.utilization + (rng.next() - 0.5) * 0.16, 0.55, 0.96);
-    let damageCapacity = player.defensePoints * DEFENSE_DAMAGE_PER_MINUTE_PER_POINT / 60 * momentaryUtilization * deltaSeconds;
+    let damageCapacity = player.defensePoints * DEFENSE_DAMAGE_PER_MINUTE_PER_POINT / 60 * momentaryUtilization * defenseScale * deltaSeconds;
     for (const batch of active) {
         if (damageCapacity <= 0) {
             break;
@@ -159,6 +159,7 @@ export function simulateSelfPlay(
     seed: string,
     strategies: readonly [SelfPlayStrategy, SelfPlayStrategy],
     maximumSeconds = 15 * 60,
+    defenseScales: readonly [number, number] = [1, 1],
 ): SelfPlayResult {
     const rng = new SeededRandom(seed);
     const players: [SimPlayer, SimPlayer] = [createPlayer(rng.next() * 2), createPlayer(rng.next() * 2)];
@@ -172,8 +173,8 @@ export function simulateSelfPlay(
         }
         spawnMonsters(players[0], players[1], now, STEP_SECONDS, rng);
         spawnMonsters(players[1], players[0], now, STEP_SECONDS, rng);
-        defend(players[0], strategies[0], now, STEP_SECONDS, rng);
-        defend(players[1], strategies[1], now, STEP_SECONDS, rng);
+        defend(players[0], strategies[0], now, STEP_SECONDS, rng, defenseScales[0]);
+        defend(players[1], strategies[1], now, STEP_SECONDS, rng, defenseScales[1]);
     }
 
     const winner = players[0].baseHealth <= 0 && players[1].baseHealth <= 0

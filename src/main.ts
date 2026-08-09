@@ -3,7 +3,7 @@ import './styles.css';
 import { GAME_CONFIG } from './config/gameConfig';
 import { GameScene } from './scenes/GameScene';
 import { isMobileLayout } from './ui/mobile';
-import { multiplayerSession } from './multiplayer/MultiplayerSession';
+import { INVITE_CODE_LENGTH, multiplayerSession } from './multiplayer/MultiplayerSession';
 import type { BaseMathsDifficulty } from './systems/MathsQuestionSystem';
 
 const baseUrl = import.meta.env.BASE_URL;
@@ -136,9 +136,10 @@ function setupModeScreen(): void {
         for (const teamId of ['solar', 'lunar'] as const) {
             const player = multiplayerSession.players.find((candidate) => candidate.teamId === teamId);
             const item = document.createElement('div');
-            item.className = `lobby-player ${teamId}`;
+            const isLocalPlayer = teamId === multiplayerSession.localTeamId;
+            item.className = `lobby-player ${isLocalPlayer ? 'player' : 'opponent'}`;
             const side = document.createElement('span');
-            side.textContent = teamId === 'solar' ? 'Left base' : 'Right base';
+            side.textContent = isLocalPlayer ? 'You · Blue' : 'Opponent · Red';
             const playerName = document.createElement('strong');
             playerName.textContent = player?.name ?? 'Waiting for player…';
             item.append(side, playerName);
@@ -172,8 +173,8 @@ function setupModeScreen(): void {
     });
     document.querySelector<HTMLButtonElement>('[data-testid="join-match-button"]')!.addEventListener('click', () => {
         const code = codeInput.value.trim().toUpperCase();
-        if (code.length !== 6) {
-            codeInput.setCustomValidity('Enter the six-character invite code.');
+        if (code.length !== INVITE_CODE_LENGTH) {
+            codeInput.setCustomValidity(`Enter the ${INVITE_CODE_LENGTH}-character invite code.`);
             codeInput.reportValidity();
             return;
         }

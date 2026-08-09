@@ -216,18 +216,19 @@ export class ProjectileSystem {
         let kills = 0;
         let hurtSounds = 0;
         let deathSounds = 0;
-        for (const enemy of enemies) {
-            if (enemy.health <= 0 || (projectile.teamId !== undefined && enemy.teamId === projectile.teamId)) {
-                continue;
-            }
+        const affectedEnemies = enemies.filter((enemy) => enemy.health > 0
+            && (projectile.teamId === undefined || enemy.teamId !== projectile.teamId)
+            && Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y) <= radius);
+        const multiplayerDamageShare = projectile.teamId === undefined || affectedEnemies.length === 0
+            ? 1
+            : Math.min(1, 3 / affectedEnemies.length);
+        for (const enemy of affectedEnemies) {
             const distance = Math.hypot(enemy.x - projectile.x, enemy.y - projectile.y);
-            if (distance <= radius) {
-                const falloff = 1 - distance / radius * 0.45;
-                hurtSounds += 1;
-                if (applyDamage(enemy, projectile.damage * falloff)) {
-                    kills += 1;
-                    deathSounds += 1;
-                }
+            const falloff = 1 - distance / radius * 0.45;
+            hurtSounds += 1;
+            if (applyDamage(enemy, projectile.damage * multiplayerDamageShare * falloff)) {
+                kills += 1;
+                deathSounds += 1;
             }
         }
         explosions.push({ x: projectile.x, y: projectile.y, radius, lifeMs: 260 });

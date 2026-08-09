@@ -7,7 +7,7 @@ import { buildFlowField } from '../../src/pathfinding/FlowField';
 import { createEmptyCostGrid } from '../../src/pathfinding/ThreatMap';
 import { TowerSystem } from '../../src/systems/TowerSystem';
 import type { TowerState } from '../../src/types';
-import { DEFENSE_DAMAGE_PER_MINUTE_PER_POINT, getMultiplayerTowerQuestionDifficulty } from '../../src/multiplayer/BalanceConfig';
+import { DEFENSE_DAMAGE_PER_MINUTE_PER_POINT, getMultiplayerTowerQuestionDifficulty, MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER } from '../../src/multiplayer/BalanceConfig';
 
 describe('tower target selection', () => {
     it('targets the enemy closest to the base among valid enemies', () => {
@@ -58,14 +58,14 @@ describe('tower target selection', () => {
         for (const type of ['easy', 'spray', 'flamethrower'] as const) {
             for (const level of [1, 2, 3, 8]) {
                 expect(calculateTowerDamagePerSecond({ type, level, teamId: 'solar' }) * 60)
-                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * level);
+                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * level * MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER[type]);
             }
             expect(getMultiplayerTowerQuestionDifficulty(type)).toBe('easy');
         }
         for (const type of ['missile', 'cluster'] as const) {
             for (const level of [1, 2, 3, 8]) {
                 expect(calculateTowerDamagePerSecond({ type, level, teamId: 'lunar' }) * 60)
-                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * 2 * level);
+                    .toBeCloseTo(DEFENSE_DAMAGE_PER_MINUTE_PER_POINT * 2 * level * MULTIPLAYER_WEAPON_DAMAGE_MULTIPLIER[type]);
             }
             expect(getMultiplayerTowerQuestionDifficulty(type)).toBe('medium');
         }
