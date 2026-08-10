@@ -11,6 +11,17 @@ import type { MonsterGeneratorTrack, MonsterGeneratorType, TowerDifficulty } fro
 // answer rates it is effectively unreachable, so offense can scale indefinitely.
 export const MAX_MONSTER_GENERATOR_LEVEL = Number.MAX_SAFE_INTEGER;
 export const WRONG_ANSWER_NIBBLE_LEVEL_MULTIPLIER = 1 / 3;
+export const TIEBREAKER_START_MS = 10 * 60_000;
+export const TIEBREAKER_INITIAL_HEALTH_BOOST = 0.01;
+export const TIEBREAKER_HEALTH_BOOST_PER_MINUTE = 0.05;
+
+export function getTiebreakerHealthMultiplier(elapsedMs: number): number {
+    if (elapsedMs < TIEBREAKER_START_MS) {
+        return 1;
+    }
+    const overtimeMinutes = (elapsedMs - TIEBREAKER_START_MS) / 60_000;
+    return 1 + TIEBREAKER_INITIAL_HEALTH_BOOST + overtimeMinutes * TIEBREAKER_HEALTH_BOOST_PER_MINUTE;
+}
 
 export interface MonsterMix {
     types: readonly MonsterGeneratorType[];

@@ -24,6 +24,7 @@ type WireMessage =
     | { kind: 'resync'; snapshot: MultiplayerSnapshot }
     | { kind: 'gameEnd'; tick: number; winner: TeamId }
     | { kind: 'rematchRequest' }
+    | { kind: 'heartbeat'; sentAt: number }
     | { kind: 'error'; message: string };
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -62,6 +63,10 @@ class MultiplayerSession {
     private resyncRequestListeners = new Set<(tick: number) => void>();
     private resyncListeners = new Set<(snapshot: MultiplayerSnapshot) => void>();
     private gameEndListeners = new Set<(tick: number, winner: TeamId) => void>();
+    private connectionListeners = new Set<(connected: boolean) => void>();
+    private connected = false;
+    private heartbeatIntervalId?: number;
+    private lastConnectionActivityMs = 0;
 
     get isMultiplayer(): boolean {
         return this.mode === 'multiplayer';
@@ -109,12 +114,28 @@ class MultiplayerSession {
                 return;
             }
             this.connection = connection;
+            this.monitorConnection(connection);
             this.emitStatus('Player 2 is joining…');
-            connection.on('data', (data) => this.handleHostMessage(data as WireMessage, host));
-            connection.on('close', () => this.emitStatus('Player 2 disconnected'));
-            connection.on('error', () => this.emitStatus('Connection lost'));
+            connection.on('open', () => this.setConnected(true));
+            connection.on('data', (data) => {
+                this.lastConnectionActivityMs = Date.now();
+                this.setConnected(true);
+                this.handleHostMessage(data as WireMessage, host);
+            });
+            connection.on('close', () => {
+                this.setConnected(false);
+                this.emitStatus('Player 2 disconnected');
+            });
+            connection.on('error', () => {
+                this.setConnected(false);
+                this.emitStatus('Connection lost');
+            });
         });
-        peer.on('error', () => this.emitStatus('Could not open that lobby. Try creating another.'));
+        peer.on('disconnected', () => this.setConnected(false));
+        peer.on('error', () => {
+            this.setConnected(false);
+            this.emitStatus('Could not open that lobby. Try creating another.');
+        });
         return this.inviteCode;
     }
 
@@ -147,18 +168,34 @@ class MultiplayerSession {
         peer.on('open', () => {
             const connection = peer.connect(`aa-${this.inviteCode.toLowerCase()}`, { reliable: true });
             this.connection = connection;
+            this.monitorConnection(connection);
             connection.on('open', () => {
+                this.setConnected(true);
                 this.emitStatus('Connected — joining the lobby');
                 connection.send({
                     kind: 'join',
                     profile: { id: this.localId, name: this.cleanName(name), mathsLevel, strength: normalizePlayerStrength(strength) },
                 } satisfies WireMessage);
             });
-            connection.on('data', (data) => this.handleGuestMessage(data as WireMessage));
-            connection.on('close', () => this.emitStatus('Host disconnected'));
-            connection.on('error', () => this.emitStatus('Connection lost'));
+            connection.on('data', (data) => {
+                this.lastConnectionActivityMs = Date.now();
+                this.setConnected(true);
+                this.handleGuestMessage(data as WireMessage);
+            });
+            connection.on('close', () => {
+                this.setConnected(false);
+                this.emitStatus('Host disconnected');
+            });
+            connection.on('error', () => {
+                this.setConnected(false);
+                this.emitStatus('Connection lost');
+            });
         });
-        peer.on('error', () => this.emitStatus('Match not found. Check the invite code.'));
+        peer.on('disconnected', () => this.setConnected(false));
+        peer.on('error', () => {
+            this.setConnected(false);
+            this.emitStatus('Match not found. Check the invite code.');
+        });
     }
 
     startMatch(): number | undefined {
@@ -275,7 +312,18 @@ class MultiplayerSession {
         return () => this.gameEndListeners.delete(listener);
     }
 
+    onConnectionChange(listener: (connected: boolean) => void): () => void {
+        this.connectionListeners.add(listener);
+        listener(this.connected || this.isComputerOpponent);
+        return () => this.connectionListeners.delete(listener);
+    }
+
     close(): void {
+        this.setConnected(false);
+        if (this.heartbeatIntervalId !== undefined) {
+            window.clearInterval(this.heartbeatIntervalId);
+            this.heartbeatIntervalId = undefined;
+        }
         this.connection?.close();
         this.peer?.destroy();
         this.connection = undefined;
@@ -363,6 +411,41 @@ class MultiplayerSession {
 
     private emitStart(): void {
         this.startListeners.forEach((listener) => listener(this.seed));
+    }
+
+    private setConnected(connected: boolean): void {
+        if (this.connected === connected) {
+            return;
+        }
+        this.connected = connected;
+        this.connectionListeners.forEach((listener) => listener(connected));
+    }
+
+    private monitorConnection(connection: DataConnection): void {
+        if (this.heartbeatIntervalId !== undefined) {
+            window.clearInterval(this.heartbeatIntervalId);
+        }
+        this.lastConnectionActivityMs = Date.now();
+        this.heartbeatIntervalId = window.setInterval(() => {
+            if (Date.now() - this.lastConnectionActivityMs > 1_500) {
+                this.setConnected(false);
+            }
+            if (!connection.open) return;
+            try {
+                connection.send({ kind: 'heartbeat', sentAt: Date.now() } satisfies WireMessage);
+            } catch {
+                this.setConnected(false);
+            }
+        }, 500);
+        const update = () => {
+            const state = connection.peerConnection.connectionState;
+            if (state === 'connected') {
+                this.setConnected(true);
+            } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+                this.setConnected(false);
+            }
+        };
+        connection.peerConnection.addEventListener('connectionstatechange', update);
     }
 }
 

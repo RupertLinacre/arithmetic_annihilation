@@ -339,7 +339,7 @@
   background: var(--amber);
 }
 
-.is-multiplayer .settings-field:first-of-type {
+.is-multiplayer .settings-spawn-rate-field {
   display: none;
 }
 
@@ -787,6 +787,28 @@ body {
 
 .settings-field + .settings-field {
   margin-top: 12px;
+}
+
+.settings-volume-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-volume-controls .music-volume-slider {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+#game-status-message[data-state="connection-lost"] {
+  border-color: rgba(232, 93, 117, 0.72);
+  background: rgba(232, 93, 117, 0.16);
+  color: #ffd9df;
+  font-weight: 800;
+}
+
+.mobile-battle-stats {
+  display: none;
 }
 
 .settings-field span {
@@ -1472,12 +1494,20 @@ html.is-mobile #game-surface {
   flex: 1 1 auto;
   height: 100%;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 html.is-mobile #game-root {
   display: flex;
   align-items: flex-start;
   justify-content: center;
+  flex: 0 0 auto;
+  align-self: center;
+  width: min(100%, 160dvh);
+  height: auto;
+  aspect-ratio: 8 / 5;
 }
 
 html.is-mobile #game-root canvas {
@@ -1501,17 +1531,8 @@ html.is-mobile #side-panel {
   background: linear-gradient(180deg, rgba(16, 24, 19, 0.98), rgba(12, 18, 15, 0.98));
 }
 
-html.is-mobile .side-controls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 html.is-mobile #topbar-controls {
-  position: static;
-  top: auto;
-  right: auto;
+  display: none;
 }
 
 html.is-mobile .side-hud {
@@ -1519,19 +1540,57 @@ html.is-mobile .side-hud {
 }
 
 html.is-mobile #hud {
+  display: block;
   flex: 1 1 auto;
-  flex-wrap: nowrap;
-  gap: 7px;
-  justify-content: space-between;
   min-width: 0;
   padding: 7px 8px;
   font-size: 12px;
+  line-height: 32px;
 }
 
 html.is-mobile #hud > span {
-  flex: 0 1 auto;
+  display: inline-flex;
   min-width: 0;
   gap: 3px;
+  margin-right: 7px;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+html.is-mobile #hud > .settings-button {
+  float: right;
+  margin: 0 0 3px 8px;
+}
+
+html.is-mobile.is-multiplayer #hud > .base-status,
+html.is-mobile.is-multiplayer #hud > .rival-base-status {
+  display: none;
+}
+
+html.is-mobile.is-multiplayer #hud {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) 32px;
+  grid-template-rows: repeat(2, auto);
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 12px;
+  padding-block: 7px;
+  line-height: 1.2;
+}
+
+html.is-mobile.is-multiplayer #hud > .settings-button {
+  float: none;
+  grid-column: 4;
+  grid-row: 1 / 3;
+  align-self: center;
+  margin: 0;
+}
+
+html.is-mobile.is-multiplayer #hud > span:last-child {
+  display: flex;
+  grid-column: 1 / 4;
+  grid-row: 2;
+  width: fit-content;
 }
 
 html.is-mobile #hud .base-status,
@@ -1568,6 +1627,11 @@ html.is-mobile .side-info {
   overflow-y: auto;
   scroll-padding-bottom: 10px;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+html.is-mobile .side-info::-webkit-scrollbar {
+  display: none;
 }
 
 html.is-mobile .side-info #game-status-message {
@@ -1605,10 +1669,15 @@ html.is-mobile .side-info .build-popup .popup-definition {
   font-size: 16px;
 }
 
-html.is-mobile .side-info .build-popup .answer-grid,
-html.is-mobile .side-info .build-popup .answer-popup-actions {
+html.is-mobile .side-info .build-popup .answer-grid {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+}
+
+html.is-mobile .side-info .build-popup .answer-popup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -1761,6 +1830,80 @@ html.is-mobile .side-info .settings-popup {
   max-height: none;
   min-height: 100%;
   overflow-y: auto;
+}
+
+html.is-mobile.is-multiplayer .mobile-battle-stats:not([hidden]) {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: rgba(12, 18, 16, 0.96);
+  font-size: clamp(10px, 1.4vw, 13px);
+}
+
+html.is-mobile .mobile-team-stats {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(247, 240, 214, 0.16);
+  border-radius: 8px;
+  background: rgba(247, 240, 214, 0.04);
+}
+
+html.is-mobile .mobile-team-stats-heading,
+html.is-mobile .mobile-team-points {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+html.is-mobile .mobile-team-stats-heading span,
+html.is-mobile .mobile-team-points span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+html.is-mobile .mobile-team-stats.is-local strong,
+html.is-mobile .mobile-team-stats.is-local b {
+  color: #a9d4ff;
+}
+
+html.is-mobile .mobile-team-stats.is-rival strong,
+html.is-mobile .mobile-team-stats.is-rival b {
+  color: #ffacb9;
+}
+
+html.is-mobile .mobile-health-meter {
+  display: block;
+  width: 100%;
+  height: 7px;
+  margin: 5px 0 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+html.is-mobile .mobile-health-meter > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transition: transform 140ms ease-out;
+}
+
+html.is-mobile .is-local .mobile-health-meter > span {
+  background: #5ca5ff;
+}
+
+html.is-mobile .is-rival .mobile-health-meter > span {
+  background: #e85d75;
+}
+
+html.is-mobile .mobile-team-points {
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 html.is-mobile .drawer-backdrop {

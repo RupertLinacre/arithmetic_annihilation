@@ -13,8 +13,10 @@ import {
     getGeneratorSpawnPeriodMs,
     getGeneratorUpgradeDifficulty,
     getMonsterMix,
+    getTiebreakerHealthMultiplier,
     getWrongAnswerNibbleLevelIncrease,
     MAX_MONSTER_GENERATOR_LEVEL,
+    TIEBREAKER_START_MS,
 } from '../../src/multiplayer/MonsterGenerator';
 import {
     getStrengthAdjustedSpawnPeriodMs,
@@ -75,5 +77,12 @@ describe('multiplayer monster generator progression', () => {
         const secondRun = Array.from({ length: 20 }, () => chooseMonsterType('advanced', 12, second));
         expect(firstRun).toEqual(secondRun);
         expect(new Set(firstRun).size).toBeGreaterThan(1);
+    });
+
+    it('starts the multiplayer health tie-breaker at ten minutes and keeps increasing it', () => {
+        expect(getTiebreakerHealthMultiplier(TIEBREAKER_START_MS - 1)).toBe(1);
+        expect(getTiebreakerHealthMultiplier(TIEBREAKER_START_MS)).toBeCloseTo(1.01);
+        expect(getTiebreakerHealthMultiplier(TIEBREAKER_START_MS + 60_000)).toBeCloseTo(1.06);
+        expect(getTiebreakerHealthMultiplier(TIEBREAKER_START_MS + 10 * 60_000)).toBeCloseTo(1.51);
     });
 });

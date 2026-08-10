@@ -38,9 +38,6 @@ export class MobileLayout {
         this.sidePanel.className = 'side-panel';
         this.sidePanel.setAttribute('aria-label', 'Game panel');
 
-        const controlsSlot = document.createElement('div');
-        controlsSlot.className = 'side-controls';
-
         const hudSlot = document.createElement('div');
         hudSlot.className = 'side-hud';
 
@@ -48,17 +45,17 @@ export class MobileLayout {
         this.infoHost.className = 'side-info';
         this.infoHost.dataset.sideInfo = '';
 
-        this.sidePanel.append(controlsSlot, hudSlot, this.infoHost);
+        this.sidePanel.append(hudSlot, this.infoHost);
         this.frame.append(this.sidePanel);
 
         // Relocate existing controls/HUD/status into the side panel.
-        const controls = document.querySelector<HTMLElement>('#topbar-controls');
-        if (controls) {
-            controlsSlot.append(controls);
-        }
         const hud = document.querySelector<HTMLElement>('#hud');
         if (hud) {
             hudSlot.append(hud);
+            const settingsButton = document.querySelector<HTMLButtonElement>('[data-testid="settings-button"]');
+            if (settingsButton) {
+                hud.prepend(settingsButton);
+            }
         }
         const status = document.querySelector<HTMLElement>('[data-testid="game-status-message"]');
         if (status) {

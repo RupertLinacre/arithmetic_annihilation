@@ -12,13 +12,15 @@ import {
     chooseMonsterType,
     getGeneratorDamageScale,
     getGeneratorHealthScale,
+    getGeneratorQuestionValue,
     getGeneratorSpawnPeriodMs,
     getGeneratorUpgradeDifficulty,
     getMonsterMix,
+    getTiebreakerHealthMultiplier,
     getWrongAnswerNibbleLevelIncrease,
     MAX_MONSTER_GENERATOR_LEVEL,
 } from '../multiplayer/MonsterGenerator';
-import { MULTIPLAYER_BASE_HEALTH } from '../multiplayer/BalanceConfig';
+import { getMultiplayerTowerQuestionValue, MULTIPLAYER_BASE_HEALTH } from '../multiplayer/BalanceConfig';
 import { getStrengthAdjustedSpawnPeriodMs } from '../multiplayer/PlayerStrength';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
 import { calculateTowerThreatCosts, createEmptyCostGrid, type CostGrid, getTowerStats } from '../pathfinding/ThreatMap';
@@ -346,8 +348,8 @@ export class GameScene extends Phaser.Scene {
     private baseHealth = GAME_CONFIG.baseHealth;
     private baseHealthByTeam: Record<TeamId, number> = { solar: MULTIPLAYER_BASE_HEALTH, lunar: MULTIPLAYER_BASE_HEALTH };
     private statsByTeam: Record<TeamId, MultiplayerStats> = {
-        solar: { kills: 0, answered: 0, correctAnswers: 0 },
-        lunar: { kills: 0, answered: 0, correctAnswers: 0 },
+        solar: { kills: 0, answered: 0, correctAnswers: 0, defensePoints: 0, attackPoints: 0 },
+        lunar: { kills: 0, answered: 0, correctAnswers: 0, defensePoints: 0, attackPoints: 0 },
     };
     private generators: MonsterGeneratorState[] = [];
     private multiplayerSpawnRng!: SeededRandom;
@@ -395,6 +397,9 @@ export class GameScene extends Phaser.Scene {
     private questionPauseActive = false;
     private spawningUnlocked = false;
     private placementWarningTimeoutId?: number;
+    private connectionLostTimeoutId?: number;
+    private connectionLost = false;
+    private initialGuidanceDismissed = false;
     private debug: DebugToggles = { grid: true, ranges: false, flow: false, costs: false, los: false };
 
     constructor() {
@@ -507,6 +512,10 @@ export class GameScene extends Phaser.Scene {
             window.clearTimeout(this.placementWarningTimeoutId);
             this.placementWarningTimeoutId = undefined;
         }
+        if (this.connectionLostTimeoutId !== undefined) {
+            window.clearTimeout(this.connectionLostTimeoutId);
+            this.connectionLostTimeoutId = undefined;
+        }
         for (const sprite of this.towerSprites.values()) sprite.destroy();
         for (const sprite of this.enemySprites.values()) sprite.destroy();
         for (const sprite of this.enemyShadows.values()) sprite.destroy();
@@ -529,8 +538,8 @@ export class GameScene extends Phaser.Scene {
         this.pendingAirstrikes = [];
         this.baseHealthByTeam = { solar: MULTIPLAYER_BASE_HEALTH, lunar: MULTIPLAYER_BASE_HEALTH };
         this.statsByTeam = {
-            solar: { kills: 0, answered: 0, correctAnswers: 0 },
-            lunar: { kills: 0, answered: 0, correctAnswers: 0 },
+            solar: { kills: 0, answered: 0, correctAnswers: 0, defensePoints: 0, attackPoints: 0 },
+            lunar: { kills: 0, answered: 0, correctAnswers: 0, defensePoints: 0, attackPoints: 0 },
         };
         this.generators = TEAMS.flatMap((teamId) => GENERATOR_TRACKS.map((track) => ({
             teamId,
@@ -566,6 +575,8 @@ export class GameScene extends Phaser.Scene {
         this.questionPauseActive = false;
         this.isPaused = false;
         this.spawningUnlocked = false;
+        this.initialGuidanceDismissed = false;
+        this.connectionLost = false;
 
         this.rebuildFlowField();
         this.createMapSprites();
@@ -583,6 +594,7 @@ export class GameScene extends Phaser.Scene {
         this.baseDamageFlashMs = Math.max(0, this.baseDamageFlashMs - deltaMs);
         if (this.isMultiplayer) {
             this.updateMonsterGenerators(deltaMs);
+            this.applyTiebreakerHealthBoost();
         } else if (this.spawningUnlocked) {
             this.enemies.push(...this.spawner.update(deltaMs, this.towers, {
                 difficulty: this.spawnRate,
@@ -726,15 +738,16 @@ export class GameScene extends Phaser.Scene {
         this.render();
     }
 
-    private buildTower(cell: GridPoint, towerType: TowerType, teamId = this.localTeamId): void {
+    private buildTower(cell: GridPoint, towerType: TowerType, teamId = this.localTeamId): boolean {
         if (towerType === 'airstrike') {
             this.scheduleAirstrike(cell, teamId);
             this.spawningUnlocked = true;
+            if (teamId === this.localTeamId) this.initialGuidanceDismissed = true;
             this.syncStatusMessage();
-            return;
+            return true;
         }
         if (!this.canBuildOnCell(cell, teamId) || this.findTowerAt(cell.x, cell.y)) {
-            return;
+            return false;
         }
         const tower = createTower(this.nextTowerId++, cell.x, cell.y, towerType, this.isMultiplayer ? teamId : undefined);
         if (isWallTower(tower)) {
@@ -743,8 +756,10 @@ export class GameScene extends Phaser.Scene {
         }
         this.towers.push(tower);
         this.spawningUnlocked = true;
+        if (teamId === this.localTeamId) this.initialGuidanceDismissed = true;
         this.rebuildFlowField();
         this.syncStatusMessage();
+        return true;
     }
 
     private scheduleAirstrike(cell: GridPoint, teamId?: TeamId): void {
@@ -837,13 +852,16 @@ export class GameScene extends Phaser.Scene {
         }, 2_800);
     }
 
-    private upgradeExistingTower(tower: TowerState, teamId = this.localTeamId): void {
+    private upgradeExistingTower(tower: TowerState, teamId = this.localTeamId): boolean {
         if (this.isMultiplayer && tower.teamId !== teamId) {
-            return;
+            return false;
         }
         if (upgradeTower(tower)) {
             this.rebuildFlowField();
+            if (teamId === this.localTeamId) this.initialGuidanceDismissed = true;
+            return true;
         }
+        return false;
     }
 
     private destroyTower(tower: TowerState): void {
@@ -893,13 +911,17 @@ export class GameScene extends Phaser.Scene {
             return;
         }
         if (command.kind === 'build') {
-            this.buildTower(command.cell, command.towerType, command.teamId);
+            if (this.buildTower(command.cell, command.towerType, command.teamId)) {
+                this.statsByTeam[command.teamId].defensePoints += getMultiplayerTowerQuestionValue(command.towerType);
+            }
             return;
         }
         if (command.kind === 'upgrade') {
             const tower = this.towers.find((candidate) => candidate.id === command.towerId);
             if (tower) {
-                this.upgradeExistingTower(tower, command.teamId);
+                if (this.upgradeExistingTower(tower, command.teamId)) {
+                    this.statsByTeam[command.teamId].defensePoints += getMultiplayerTowerQuestionValue(tower.type);
+                }
             }
             return;
         }
@@ -911,6 +933,8 @@ export class GameScene extends Phaser.Scene {
                 if (wasOff) {
                     generator.progress = this.multiplayerStrengthByTeam[command.teamId];
                 }
+                this.statsByTeam[command.teamId].attackPoints += getGeneratorQuestionValue(command.track);
+                if (command.teamId === this.localTeamId) this.initialGuidanceDismissed = true;
                 this.renderMonsterGeneratorControls();
             }
             return;
@@ -922,10 +946,12 @@ export class GameScene extends Phaser.Scene {
         } else {
             const rivalGenerator = this.generators.find((candidate) => candidate.teamId === opponentOf(command.teamId) && candidate.track === 'nibble');
             if (rivalGenerator) {
+                const awardedPoints = getWrongAnswerNibbleLevelIncrease(command.value);
                 rivalGenerator.level = Math.min(
                     MAX_MONSTER_GENERATOR_LEVEL,
-                    rivalGenerator.level + getWrongAnswerNibbleLevelIncrease(command.value),
+                    rivalGenerator.level + awardedPoints,
                 );
+                this.statsByTeam[opponentOf(command.teamId)].attackPoints += awardedPoints;
             }
         }
     }
@@ -1059,6 +1085,8 @@ export class GameScene extends Phaser.Scene {
                 vx: stableNumber(enemy.vx),
                 vy: stableNumber(enemy.vy),
                 health: stableNumber(enemy.health),
+                maxHealth: stableNumber(enemy.maxHealth),
+                tiebreakerHealthMultiplier: stableNumber(enemy.tiebreakerHealthMultiplier ?? 1),
                 burnMs: stableNumber(enemy.burnMs ?? 0),
             })),
             projectiles: this.projectiles.map((projectile) => ({
@@ -1075,6 +1103,7 @@ export class GameScene extends Phaser.Scene {
                 ...generator,
                 progress: stableNumber(generator.progress),
             })),
+            stats: this.statsByTeam,
             pendingCommands: this.pendingMultiplayerCommands,
             pendingAirstrikes: this.pendingAirstrikes.map((airstrike) => ({
                 id: airstrike.id,
@@ -1143,6 +1172,7 @@ export class GameScene extends Phaser.Scene {
 
     private setupMultiplayerControls(): void {
         document.querySelector<HTMLElement>('[data-stat="rival-base-status"]')!.hidden = !this.isMultiplayer;
+        document.querySelector<HTMLElement>('[data-testid="mobile-battle-stats"]')!.hidden = !this.isMultiplayer;
         if (!this.isMultiplayer) {
             return;
         }
@@ -1200,6 +1230,7 @@ export class GameScene extends Phaser.Scene {
         });
         const removeResyncListener = multiplayerSession.onResync((snapshot) => this.applyMultiplayerSnapshot(snapshot));
         const removeGameEndListener = multiplayerSession.onGameEnd((_tick, winner) => this.endGame(winner));
+        const removeConnectionListener = multiplayerSession.onConnectionChange((connected) => this.handleConnectionChange(connected));
         this.initializeComputerOpponent();
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
             removeActionListener();
@@ -1208,6 +1239,8 @@ export class GameScene extends Phaser.Scene {
             removeResyncRequestListener();
             removeResyncListener();
             removeGameEndListener();
+            removeConnectionListener();
+            if (this.connectionLostTimeoutId !== undefined) window.clearTimeout(this.connectionLostTimeoutId);
         });
     }
 
@@ -1273,6 +1306,36 @@ export class GameScene extends Phaser.Scene {
         enemy.visualTier = meta.visualTier;
         enemy.baseDamage *= getGeneratorDamageScale(generator.track, type);
         this.enemies.push(enemy);
+    }
+
+    private applyTiebreakerHealthBoost(): void {
+        const multiplier = getTiebreakerHealthMultiplier(this.elapsedMs);
+        for (const enemy of this.enemies) {
+            const previousMultiplier = enemy.tiebreakerHealthMultiplier ?? 1;
+            if (multiplier <= previousMultiplier) continue;
+            const ratio = multiplier / previousMultiplier;
+            enemy.health *= ratio;
+            enemy.maxHealth *= ratio;
+            enemy.tiebreakerHealthMultiplier = multiplier;
+        }
+    }
+
+    private handleConnectionChange(connected: boolean): void {
+        if (this.connectionLostTimeoutId !== undefined) {
+            window.clearTimeout(this.connectionLostTimeoutId);
+            this.connectionLostTimeoutId = undefined;
+        }
+        if (connected) {
+            this.connectionLost = false;
+            this.syncStatusMessage();
+            return;
+        }
+        if (multiplayerSession.isComputerOpponent) return;
+        this.connectionLostTimeoutId = window.setTimeout(() => {
+            this.connectionLostTimeoutId = undefined;
+            this.connectionLost = true;
+            this.syncStatusMessage();
+        }, 2_000);
     }
 
     private createMultiplayerSnapshot(): MultiplayerSnapshot {
@@ -1453,9 +1516,23 @@ export class GameScene extends Phaser.Scene {
                 originX + mapWidth / 2,
                 originY + camera.displayHeight / 2,
             );
+            window.requestAnimationFrame(() => this.alignMobileStatsWithMap());
         };
         fit();
         this.scale.on(Phaser.Scale.Events.RESIZE, fit);
+    }
+
+    private alignMobileStatsWithMap(): void {
+        const stats = document.querySelector<HTMLElement>('[data-testid="mobile-battle-stats"]');
+        const canvas = this.scale.canvas;
+        if (!stats || !canvas) return;
+
+        const camera = this.cameras.main;
+        const { originY, rows, cellSize } = GAME_CONFIG.map;
+        const mapBottomInCanvas = (originY + rows * cellSize - camera.worldView.y) * camera.zoom;
+        const renderedScale = canvas.getBoundingClientRect().height / canvas.height;
+        const unusedCanvasHeight = Math.max(0, canvas.height - mapBottomInCanvas) * renderedScale;
+        stats.style.marginTop = `${-unusedCanvasHeight}px`;
     }
 
     private registerDebugKeys(): void {
@@ -1731,6 +1808,9 @@ export class GameScene extends Phaser.Scene {
 
         if (this.gameOver) {
             text = '';
+        } else if (this.connectionLost) {
+            text = 'Connection lost — the battle will continue if your rival reconnects.';
+            state = 'connection-lost';
         } else if (this.isMultiplayer && this.questionPauseActive) {
             text = 'The battle continues while you answer.';
             state = 'instruction';
@@ -1742,14 +1822,11 @@ export class GameScene extends Phaser.Scene {
         } else if (this.manualPauseRequested) {
             text = 'Game paused.';
             state = 'paused';
-        } else if (this.isMultiplayer && this.towers.every((tower) => tower.teamId !== this.localTeamId)) {
+        } else if (!this.initialGuidanceDismissed && this.isMultiplayer) {
             text = 'Build on your half, or unlock a monster generator below.';
             state = 'instruction';
-        } else if (this.towers.length === 0) {
+        } else if (!this.initialGuidanceDismissed) {
             text = 'Click on a square to place a tower to start game.';
-            state = 'instruction';
-        } else {
-            text = 'Click a tower to upgrade, or a blank square to place a new tower.';
             state = 'instruction';
         }
 
@@ -1804,7 +1881,26 @@ export class GameScene extends Phaser.Scene {
             document.querySelector<HTMLElement>('[data-stat="base-label"]')!.textContent = 'You';
             document.querySelector<HTMLElement>('[data-stat="rival-base-status"]')!.hidden = false;
             document.querySelector<HTMLElement>('[data-stat="rival-health"]')!.textContent = `${Math.ceil(this.baseHealthByTeam[opponentOf(this.localTeamId)])}`;
+            this.updateMobileBattleStats();
         }
+    }
+
+    private updateMobileBattleStats(): void {
+        const rivalTeamId = opponentOf(this.localTeamId);
+        const updateTeam = (prefix: 'local' | 'rival', teamId: TeamId) => {
+            const health = this.baseHealthByTeam[teamId];
+            const healthPercent = Math.max(0, Math.min(1, health / MULTIPLAYER_BASE_HEALTH));
+            const stats = this.statsByTeam[teamId];
+            document.querySelector<HTMLElement>(`[data-mobile-stat="${prefix}-health"]`)!.textContent = `${Math.ceil(health)}`;
+            document.querySelector<HTMLElement>(`[data-mobile-stat="${prefix}-health-fill"]`)!.style.transform = `scaleX(${healthPercent})`;
+            const meter = document.querySelector<HTMLElement>(`[data-mobile-stat="${prefix}-health-meter"]`)!;
+            meter.setAttribute('aria-valuenow', `${Math.ceil(health)}`);
+            document.querySelector<HTMLElement>(`[data-mobile-stat="${prefix}-questions"]`)!.textContent = `${stats.answered}`;
+            document.querySelector<HTMLElement>(`[data-mobile-stat="${prefix}-defence"]`)!.textContent = `${stats.defensePoints}`;
+            document.querySelector<HTMLElement>(`[data-mobile-stat="${prefix}-attack"]`)!.textContent = `${Number(stats.attackPoints.toFixed(1))}`;
+        };
+        updateTeam('local', this.localTeamId);
+        updateTeam('rival', rivalTeamId);
     }
 
     private formatBaseHealthColor(healthPercent: number): string {
@@ -1856,6 +1952,7 @@ export class GameScene extends Phaser.Scene {
         this.debugGraphics.clear();
         this.renderMap();
         this.renderBaseDamageFlash();
+        this.renderMobileBaseHealthBars();
         this.renderDebugLosBlocks();
         this.renderTowerRanges();
         this.renderFlowDebug();
@@ -1868,6 +1965,27 @@ export class GameScene extends Phaser.Scene {
         this.renderAirstrikes();
         this.renderSelection();
         this.renderCostDebug();
+    }
+
+    private renderMobileBaseHealthBars(): void {
+        if (!this.isMultiplayer || !this.mobileLayout) return;
+
+        const { cellSize } = GAME_CONFIG.map;
+        const barWidth = cellSize * 2.35;
+        const barHeight = 9;
+        for (const teamId of TEAMS) {
+            const center = cellCenter(this.generatedMap.bases![teamId], GAME_CONFIG.map);
+            const healthPercent = Math.max(0, Math.min(1, this.baseHealthByTeam[teamId] / MULTIPLAYER_BASE_HEALTH));
+            const visual = this.getTeamVisual(teamId);
+            const left = center.x - barWidth / 2;
+            const top = center.y - cellSize * 1.12;
+            this.graphics.fillStyle(0x08100c, 0.9);
+            this.graphics.fillRoundedRect(left - 2, top - 2, barWidth + 4, barHeight + 4, 5);
+            this.graphics.fillStyle(visual.color, 1);
+            this.graphics.fillRoundedRect(left, top, barWidth * healthPercent, barHeight, 3);
+            this.graphics.lineStyle(1, visual.light, 0.9);
+            this.graphics.strokeRoundedRect(left, top, barWidth, barHeight, 3);
+        }
     }
 
     private renderMap(): void {

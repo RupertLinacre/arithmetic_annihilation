@@ -69,6 +69,7 @@ export interface EnemyState {
     burnSpreadCooldownMs?: number;
     teamId?: TeamId;
     visualTier?: 1 | 2 | 3 | 4;
+    tiebreakerHealthMultiplier?: number;
 }
 
 export interface ProjectileState {
@@ -119,6 +120,8 @@ export interface MultiplayerStats {
     kills: number;
     answered: number;
     correctAnswers: number;
+    defensePoints: number;
+    attackPoints: number;
 }
 
 export interface MultiplayerSnapshot {

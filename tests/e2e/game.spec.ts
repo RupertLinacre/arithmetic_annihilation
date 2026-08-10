@@ -109,6 +109,9 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect.poll(() => new URL(page.url()).searchParams.get('base-difficulty')).toBe('year3');
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMobileAnswerMode())).toBe('multiple-choice');
     await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('multiple-choice');
+    await expect(page.getByTestId('music-mute-button')).toBeHidden();
+    await expect(page.getByTestId('music-volume-slider')).toBeHidden();
+    await page.getByTestId('settings-button').click();
     await expect(page.getByTestId('music-mute-button')).toBeVisible();
     await expect(page.getByTestId('music-volume-slider')).toBeVisible();
 
@@ -124,6 +127,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await page.getByTestId('music-mute-button').click();
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMusicMuted())).toBe(false);
     await expect.poll(() => new URL(page.url()).searchParams.get('music-muted')).toBe('false');
+    await page.getByTestId('settings-button').click();
 
     const openSettings = async () => {
         await page.getByTestId('settings-button').click();
@@ -238,7 +242,7 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.isPaused())).toBe(false);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTypes())).toEqual(['missile']);
-    await expect(page.getByTestId('game-status-message')).toHaveText('Click a tower to upgrade, or a blank square to place a new tower.');
+    await expect(page.getByTestId('game-status-message')).toBeHidden();
 
     const secondBuildable = await page.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
     expect(secondBuildable).not.toBeNull();
@@ -347,6 +351,12 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.openFirstBuildQuestion())).toBe(true);
     await expect(page.getByTestId('build-popup')).toBeVisible();
     await expect(page.locator('[data-testid="answer-button"]')).toHaveCount(4);
+    const choiceLayout = await page.locator('[data-testid="answer-button"]').evaluateAll((buttons) => buttons.map((button) => {
+        const bounds = button.getBoundingClientRect();
+        return { left: Math.round(bounds.left), top: Math.round(bounds.top) };
+    }));
+    expect(new Set(choiceLayout.map(({ left }) => left)).size).toBe(2);
+    expect(new Set(choiceLayout.map(({ top }) => top)).size).toBe(2);
     await expect(page.getByTestId('answer-input')).toHaveCount(0);
 
     const correctAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
@@ -573,6 +583,7 @@ test('two players share scheduled actions and continue simulating locally', asyn
         () => guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs()),
         { timeout: 5_000 },
     ).toBeGreaterThan(guestElapsedBeforeDisconnect + 400);
+    await expect(guest.getByTestId('game-status-message')).toContainText('Connection lost', { timeout: 5_000 });
 
     await context.close();
 });
