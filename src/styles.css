@@ -120,6 +120,41 @@
   font: inherit;
 }
 
+.multiplayer-setup .player-strength-field {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(117, 183, 255, 0.07);
+}
+
+.player-strength-field > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.player-strength-field output {
+  color: var(--amber);
+  font-weight: 800;
+}
+
+.multiplayer-setup .player-strength-field input[type="range"] {
+  min-height: 24px;
+  padding: 0;
+  accent-color: var(--amber);
+}
+
+.player-strength-field small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.lobby-player small {
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .setup-divider {
   display: flex;
   align-items: center;
@@ -156,6 +191,31 @@
   background: transparent;
   font: inherit;
   cursor: pointer;
+}
+
+.team-colour-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 2px solid #75b7ff;
+  border-radius: 9px;
+  background: linear-gradient(105deg, rgba(40, 120, 255, 0.42), rgba(40, 120, 255, 0.16));
+  box-shadow: 0 0 0 3px rgba(40, 120, 255, 0.12);
+}
+
+.team-colour-banner strong {
+  color: #ffffff;
+  font-size: 21px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.team-colour-banner span {
+  color: #ffb2be;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .invite-code-panel {
@@ -206,8 +266,18 @@
   font-size: 12px;
 }
 
-.lobby-player.solar strong { color: var(--amber); }
-.lobby-player.lunar strong { color: #7ee7ff; }
+.lobby-player.player {
+  border-color: rgba(117, 183, 255, 0.65);
+  background: rgba(40, 120, 255, 0.1);
+}
+
+.lobby-player.opponent {
+  border-color: rgba(227, 50, 79, 0.6);
+  background: rgba(227, 50, 79, 0.08);
+}
+
+.lobby-player.player strong { color: #8fc6ff; }
+.lobby-player.opponent strong { color: #ff9aaa; }
 
 .monster-generator-button {
   position: relative;
@@ -523,6 +593,13 @@ body {
   color: #fff3cc;
 }
 
+#game-status-message[data-state="placement-warning"] {
+  border-color: rgba(92, 165, 255, 0.78);
+  background: rgba(40, 120, 255, 0.2);
+  color: #e8f4ff;
+  font-weight: 800;
+}
+
 #game-status-message[hidden] {
   display: none;
 }
@@ -545,6 +622,30 @@ body {
 
 .base-status {
   min-width: 128px;
+}
+
+.is-multiplayer #hud .base-status {
+  border: 1px solid rgba(40, 120, 255, 0.62);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(40, 120, 255, 0.13);
+}
+
+.is-multiplayer #hud .base-status,
+.is-multiplayer #hud .base-status strong {
+  color: #a9d4ff;
+}
+
+.is-multiplayer #hud .rival-base-status {
+  border: 1px solid rgba(227, 50, 79, 0.64);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #ffacb9;
+  background: rgba(227, 50, 79, 0.14);
+}
+
+.is-multiplayer #hud .rival-base-status strong {
+  color: #ffd1d8;
 }
 
 .base-meter {
@@ -1251,6 +1352,19 @@ html.is-mobile .multiplayer-setup {
   margin-top: 7px;
 }
 
+html.is-mobile .team-colour-banner {
+  padding: 6px 9px;
+  border-width: 2px;
+}
+
+html.is-mobile .team-colour-banner strong {
+  font-size: 16px;
+}
+
+html.is-mobile .team-colour-banner span {
+  font-size: 11px;
+}
+
 html.is-mobile .multiplayer-setup label {
   gap: 2px;
   font-size: 11px;
@@ -1261,6 +1375,28 @@ html.is-mobile .multiplayer-setup select {
   min-height: 34px;
   padding: 0 9px;
   font-size: 13px;
+}
+
+html.is-mobile .multiplayer-setup .player-strength-field {
+  grid-column: 1 / -1;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  padding: 4px 8px;
+}
+
+html.is-mobile .player-strength-field > span,
+html.is-mobile .player-strength-field small {
+  grid-column: 1;
+}
+
+html.is-mobile .player-strength-field small {
+  display: none;
+}
+
+html.is-mobile .multiplayer-setup .player-strength-field input[type="range"] {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
 }
 
 html.is-mobile .multiplayer-setup .primary-button {
@@ -1408,6 +1544,16 @@ html.is-mobile #hud .base-status {
   font-weight: 800;
 }
 
+html.is-mobile.is-multiplayer #hud .base-status,
+html.is-mobile.is-multiplayer #hud .base-status strong {
+  color: #a9d4ff;
+}
+
+html.is-mobile.is-multiplayer #hud .base-status,
+html.is-mobile.is-multiplayer #hud .rival-base-status {
+  padding: 2px 5px;
+}
+
 html.is-mobile #hud .base-meter {
   display: none;
 }
@@ -1426,6 +1572,19 @@ html.is-mobile .side-info {
 
 html.is-mobile .side-info #game-status-message {
   font-size: 14px;
+}
+
+html.is-mobile .side-info #game-status-message[data-state="placement-warning"] {
+  min-height: 56px;
+  padding: 10px 12px;
+  border-width: 2px;
+  border-color: #75b7ff;
+  background: rgba(24, 92, 194, 0.9);
+  box-shadow: 0 0 0 3px rgba(40, 120, 255, 0.22), 0 8px 20px rgba(0, 0, 0, 0.34);
+  color: #ffffff;
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
 }
 
 /* Docked question / answer / review panel inside the info column. */

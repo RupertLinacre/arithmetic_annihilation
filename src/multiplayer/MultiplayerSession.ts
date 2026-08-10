@@ -1,6 +1,7 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { BaseMathsDifficulty } from '../systems/MathsQuestionSystem';
 import type { MultiplayerCommand, MultiplayerSnapshot, ScheduledMultiplayerCommand, TeamId } from '../types';
+import { DEFAULT_PLAYER_STRENGTH, normalizePlayerStrength } from './PlayerStrength';
 
 export type MultiplayerRole = 'host' | 'guest';
 
@@ -9,10 +10,11 @@ export interface PlayerProfile {
     name: string;
     mathsLevel: BaseMathsDifficulty;
     teamId: TeamId;
+    strength: number;
 }
 
 type WireMessage =
-    | { kind: 'join'; profile: Pick<PlayerProfile, 'id' | 'name' | 'mathsLevel'> }
+    | { kind: 'join'; profile: Pick<PlayerProfile, 'id' | 'name' | 'mathsLevel' | 'strength'> }
     | { kind: 'lobby'; players: PlayerProfile[]; inviteCode: string }
     | { kind: 'start'; seed: number; players: PlayerProfile[] }
     | { kind: 'action'; command: MultiplayerCommand }
@@ -21,9 +23,11 @@ type WireMessage =
     | { kind: 'resyncRequest'; tick: number }
     | { kind: 'resync'; snapshot: MultiplayerSnapshot }
     | { kind: 'gameEnd'; tick: number; winner: TeamId }
+    | { kind: 'rematchRequest' }
     | { kind: 'error'; message: string };
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const INVITE_CODE_LENGTH = 4;
 
 function createLocalId(): string {
     if (typeof crypto.randomUUID === 'function') {
@@ -34,7 +38,7 @@ function createLocalId(): string {
 }
 
 export function createInviteCode(): string {
-    return Array.from({ length: 6 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
+    return Array.from({ length: INVITE_CODE_LENGTH }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
 }
 
 class MultiplayerSession {
@@ -74,13 +78,23 @@ class MultiplayerSession {
         this.localTeamId = 'solar';
     }
 
-    createMatch(name: string, mathsLevel: BaseMathsDifficulty): string {
+    getPlayerStrength(teamId: TeamId): number {
+        return normalizePlayerStrength(this.players.find((player) => player.teamId === teamId)?.strength);
+    }
+
+    createMatch(name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH): string {
         this.close();
         this.mode = 'multiplayer';
         this.role = 'host';
         this.localTeamId = 'solar';
         this.inviteCode = createInviteCode();
-        const host: PlayerProfile = { id: this.localId, name: this.cleanName(name), mathsLevel, teamId: 'solar' };
+        const host: PlayerProfile = {
+            id: this.localId,
+            name: this.cleanName(name),
+            mathsLevel,
+            teamId: 'solar',
+            strength: normalizePlayerStrength(strength),
+        };
         this.players = [host];
         this.emitLobby();
         this.emitStatus('Opening private lobby…');
@@ -104,7 +118,7 @@ class MultiplayerSession {
         return this.inviteCode;
     }
 
-    startComputerMatch(name: string, mathsLevel: BaseMathsDifficulty): number {
+    startComputerMatch(name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH): number {
         this.close();
         this.mode = 'multiplayer';
         this.role = 'host';
@@ -112,8 +126,8 @@ class MultiplayerSession {
         this.isComputerOpponent = true;
         this.seed = Math.floor(Math.random() * 1_000_000_000);
         this.players = [
-            { id: this.localId, name: this.cleanName(name), mathsLevel, teamId: 'solar' },
-            { id: 'computer', name: 'Professor Byte', mathsLevel, teamId: 'lunar' },
+            { id: this.localId, name: this.cleanName(name), mathsLevel, teamId: 'solar', strength: normalizePlayerStrength(strength) },
+            { id: 'computer', name: 'Professor Byte', mathsLevel, teamId: 'lunar', strength: DEFAULT_PLAYER_STRENGTH },
         ];
         this.emitLobby();
         this.emitStatus('Computer opponent active');
@@ -121,7 +135,7 @@ class MultiplayerSession {
         return this.seed;
     }
 
-    joinMatch(code: string, name: string, mathsLevel: BaseMathsDifficulty): void {
+    joinMatch(code: string, name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH): void {
         this.close();
         this.mode = 'multiplayer';
         this.role = 'guest';
@@ -137,7 +151,7 @@ class MultiplayerSession {
                 this.emitStatus('Connected — joining the lobby');
                 connection.send({
                     kind: 'join',
-                    profile: { id: this.localId, name: this.cleanName(name), mathsLevel },
+                    profile: { id: this.localId, name: this.cleanName(name), mathsLevel, strength: normalizePlayerStrength(strength) },
                 } satisfies WireMessage);
             });
             connection.on('data', (data) => this.handleGuestMessage(data as WireMessage));
@@ -155,6 +169,24 @@ class MultiplayerSession {
         this.connection.send({ kind: 'start', seed: this.seed, players: this.players } satisfies WireMessage);
         this.emitStart();
         return this.seed;
+    }
+
+    requestRematch(): number | undefined {
+        if (!this.isMultiplayer) {
+            return undefined;
+        }
+        if (this.isComputerOpponent) {
+            this.seed = Math.floor(Math.random() * 1_000_000_000);
+            this.emitStart();
+            return this.seed;
+        }
+        if (this.role === 'host') {
+            return this.startMatch();
+        }
+        if (this.connection?.open) {
+            this.connection.send({ kind: 'rematchRequest' } satisfies WireMessage);
+        }
+        return undefined;
     }
 
     sendAction(command: MultiplayerCommand): void {
@@ -259,6 +291,7 @@ class MultiplayerSession {
                 ...message.profile,
                 name: this.cleanName(message.profile.name),
                 teamId: 'lunar',
+                strength: normalizePlayerStrength(message.profile.strength),
             };
             this.players = [host, guest];
             this.emitLobby();
@@ -272,19 +305,23 @@ class MultiplayerSession {
         }
         if (message.kind === 'resyncRequest') {
             this.resyncRequestListeners.forEach((listener) => listener(message.tick));
+            return;
+        }
+        if (message.kind === 'rematchRequest') {
+            this.startMatch();
         }
     }
 
     private handleGuestMessage(message: WireMessage): void {
         if (message.kind === 'lobby') {
-            this.players = message.players;
+            this.players = message.players.map((player) => ({ ...player, strength: normalizePlayerStrength(player.strength) }));
             this.emitLobby();
             this.emitStatus('Both players connected — host will start the game');
             return;
         }
         if (message.kind === 'start') {
             this.seed = message.seed;
-            this.players = message.players;
+            this.players = message.players.map((player) => ({ ...player, strength: normalizePlayerStrength(player.strength) }));
             this.emitStatus('Peer-to-peer game connected');
             this.emitStart();
             return;

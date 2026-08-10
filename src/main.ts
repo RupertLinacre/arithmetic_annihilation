@@ -3,7 +3,8 @@ import './styles.css';
 import { GAME_CONFIG } from './config/gameConfig';
 import { GameScene } from './scenes/GameScene';
 import { isMobileLayout } from './ui/mobile';
-import { multiplayerSession } from './multiplayer/MultiplayerSession';
+import { INVITE_CODE_LENGTH, multiplayerSession } from './multiplayer/MultiplayerSession';
+import { normalizePlayerStrength } from './multiplayer/PlayerStrength';
 import type { BaseMathsDifficulty } from './systems/MathsQuestionSystem';
 
 const baseUrl = import.meta.env.BASE_URL;
@@ -75,6 +76,10 @@ let game: Phaser.Game | undefined;
 
 function startGame(): void {
     if (game) {
+        const scene = game.scene.getScene('GameScene');
+        if (scene instanceof GameScene && multiplayerSession.isMultiplayer) {
+            scene.restartMultiplayerRound(multiplayerSession.seed);
+        }
         return;
     }
     document.querySelector<HTMLElement>('[data-testid="mode-screen"]')!.hidden = true;
@@ -105,6 +110,8 @@ function setupModeScreen(): void {
     const lobby = document.querySelector<HTMLElement>('[data-lobby-panel]')!;
     const nameInput = document.querySelector<HTMLInputElement>('[name="player-name"]')!;
     const levelSelect = document.querySelector<HTMLSelectElement>('[name="maths-level"]')!;
+    const strengthSlider = document.querySelector<HTMLInputElement>('[name="player-strength"]')!;
+    const strengthOutput = document.querySelector<HTMLOutputElement>('[data-player-strength-output]')!;
     const codeInput = document.querySelector<HTMLInputElement>('[name="invite-code"]')!;
     const inviteCode = document.querySelector<HTMLElement>('[data-invite-code]')!;
     const playersList = document.querySelector<HTMLElement>('[data-lobby-players]')!;
@@ -114,10 +121,18 @@ function setupModeScreen(): void {
 
     nameInput.value = window.localStorage.getItem('arithmetic-annihilation:player-name') ?? 'Commander';
     levelSelect.value = window.localStorage.getItem('arithmetic-annihilation:base-difficulty') ?? 'year3';
+    const savedStrength = Number.parseFloat(window.localStorage.getItem('arithmetic-annihilation:player-strength') ?? '');
+    strengthSlider.value = `${Math.round(normalizePlayerStrength(savedStrength) * 100)}`;
+
+    const selectedStrength = () => normalizePlayerStrength(Number.parseInt(strengthSlider.value, 10) / 100);
+    const renderStrength = () => { strengthOutput.value = `${Math.round(selectedStrength() * 100)}%`; };
+    renderStrength();
+    strengthSlider.addEventListener('input', renderStrength);
 
     const saveProfile = () => {
         window.localStorage.setItem('arithmetic-annihilation:player-name', nameInput.value.trim() || 'Commander');
         window.localStorage.setItem('arithmetic-annihilation:base-difficulty', levelSelect.value);
+        window.localStorage.setItem('arithmetic-annihilation:player-strength', `${selectedStrength()}`);
     };
     const showLobby = (isHost: boolean) => {
         actions.hidden = true;
@@ -128,16 +143,24 @@ function setupModeScreen(): void {
         document.querySelector<HTMLElement>('[data-lobby-heading]')!.textContent = isHost ? 'Your game is ready' : 'Joining the game…';
     };
     const renderPlayers = () => {
+        const localIsBlue = multiplayerSession.localTeamId === 'solar';
+        const colourBanner = document.querySelector<HTMLElement>('[data-testid="lobby-team-colour-banner"]')!;
+        colourBanner.querySelector('strong')!.textContent = `You are ${localIsBlue ? 'blue' : 'red'}`;
+        colourBanner.querySelector('span')!.textContent = `Your opponent is ${localIsBlue ? 'red' : 'blue'}`;
         playersList.innerHTML = '';
         for (const teamId of ['solar', 'lunar'] as const) {
             const player = multiplayerSession.players.find((candidate) => candidate.teamId === teamId);
             const item = document.createElement('div');
-            item.className = `lobby-player ${teamId}`;
+            const isLocalPlayer = teamId === multiplayerSession.localTeamId;
+            item.className = `lobby-player ${isLocalPlayer ? 'player' : 'opponent'}`;
             const side = document.createElement('span');
-            side.textContent = teamId === 'solar' ? 'Left base' : 'Right base';
+            const colour = teamId === 'solar' ? 'Blue' : 'Red';
+            side.textContent = `${isLocalPlayer ? 'You' : 'Opponent'} · ${colour}`;
             const playerName = document.createElement('strong');
             playerName.textContent = player?.name ?? 'Waiting for player…';
-            item.append(side, playerName);
+            const strength = document.createElement('small');
+            strength.textContent = player ? `${Math.round(normalizePlayerStrength(player.strength) * 100)}% strength` : '';
+            item.append(side, playerName, strength);
             playersList.append(item);
         }
         startButton.disabled = multiplayerSession.players.length !== 2;
@@ -157,26 +180,26 @@ function setupModeScreen(): void {
     });
     document.querySelector<HTMLButtonElement>('[data-testid="create-match-button"]')!.addEventListener('click', () => {
         saveProfile();
-        const code = multiplayerSession.createMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty);
+        const code = multiplayerSession.createMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
         inviteCode.textContent = code;
         showLobby(true);
         renderPlayers();
     });
     document.querySelector<HTMLButtonElement>('[data-testid="computer-match-button"]')!.addEventListener('click', () => {
         saveProfile();
-        multiplayerSession.startComputerMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty);
+        multiplayerSession.startComputerMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
     });
     document.querySelector<HTMLButtonElement>('[data-testid="join-match-button"]')!.addEventListener('click', () => {
         const code = codeInput.value.trim().toUpperCase();
-        if (code.length !== 6) {
-            codeInput.setCustomValidity('Enter the six-character invite code.');
+        if (code.length !== INVITE_CODE_LENGTH) {
+            codeInput.setCustomValidity(`Enter the ${INVITE_CODE_LENGTH}-character invite code.`);
             codeInput.reportValidity();
             return;
         }
         codeInput.setCustomValidity('');
         saveProfile();
         inviteCode.textContent = code;
-        multiplayerSession.joinMatch(code, nameInput.value, levelSelect.value as BaseMathsDifficulty);
+        multiplayerSession.joinMatch(code, nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
         showLobby(false);
         renderPlayers();
     });

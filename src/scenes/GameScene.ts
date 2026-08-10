@@ -15,8 +15,11 @@ import {
     getGeneratorSpawnPeriodMs,
     getGeneratorUpgradeDifficulty,
     getMonsterMix,
+    getWrongAnswerNibbleLevelIncrease,
     MAX_MONSTER_GENERATOR_LEVEL,
 } from '../multiplayer/MonsterGenerator';
+import { MULTIPLAYER_BASE_HEALTH } from '../multiplayer/BalanceConfig';
+import { getStrengthAdjustedSpawnPeriodMs } from '../multiplayer/PlayerStrength';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
 import { calculateTowerThreatCosts, createEmptyCostGrid, type CostGrid, getTowerStats } from '../pathfinding/ThreatMap';
 import { EnemySpawner, isGameDifficulty, type GameDifficulty } from '../systems/EnemySpawner';
@@ -80,6 +83,26 @@ const SPRITE_PATHS = {
     monster4Run: 'sprites/monster_4_run.png',
     monster4Stop: 'sprites/monster_4_stop.png',
     monster4Hurt: 'sprites/monster_4_hurt.png',
+    teamBlueBase: 'sprites/generated/base_blue.png',
+    teamRedBase: 'sprites/generated/base_red.png',
+    teamBlueMonster1: 'sprites/generated/monster_blue_1.png',
+    teamBlueMonster2: 'sprites/generated/monster_blue_2.png',
+    teamBlueMonster3: 'sprites/generated/monster_blue_3.png',
+    teamBlueMonster4: 'sprites/generated/monster_blue_4.png',
+    teamRedMonster1: 'sprites/generated/monster_red_1.png',
+    teamRedMonster2: 'sprites/generated/monster_red_2.png',
+    teamRedMonster3: 'sprites/generated/monster_red_3.png',
+    teamRedMonster4: 'sprites/generated/monster_red_4.png',
+    teamBlueTowerBasic: 'sprites/generated/tower_blue_basic.png',
+    teamBlueTowerSpray: 'sprites/generated/tower_blue_spray.png',
+    teamBlueTowerMissile: 'sprites/generated/tower_blue_missile.png',
+    teamBlueTowerCluster: 'sprites/generated/tower_blue_cluster.png',
+    teamBlueWall: 'sprites/generated/tower_blue_wall.png',
+    teamRedTowerBasic: 'sprites/generated/tower_red_basic.png',
+    teamRedTowerSpray: 'sprites/generated/tower_red_spray.png',
+    teamRedTowerMissile: 'sprites/generated/tower_red_missile.png',
+    teamRedTowerCluster: 'sprites/generated/tower_red_cluster.png',
+    teamRedWall: 'sprites/generated/tower_red_wall.png',
 } as const;
 
 const SOUND_PATHS = {
@@ -118,6 +141,68 @@ const ENEMY_TEXTURES = {
     3: { run: SPRITE_PATHS.monster3Run, stop: SPRITE_PATHS.monster3Stop, hurt: SPRITE_PATHS.monster3Hurt },
     4: { run: SPRITE_PATHS.monster4Run, stop: SPRITE_PATHS.monster4Stop, hurt: SPRITE_PATHS.monster4Hurt },
 } as const;
+
+type TeamColour = 'blue' | 'red';
+
+const TEAM_VISUALS: Record<TeamColour, {
+    texturePrefix: string;
+    color: number;
+    light: number;
+    dark: number;
+    cssColor: string;
+}> = {
+    blue: {
+        texturePrefix: 'team-blue',
+        color: 0x2878ff,
+        light: 0x8bc5ff,
+        dark: 0x103a80,
+        cssColor: '#2878ff',
+    },
+    red: {
+        texturePrefix: 'team-red',
+        color: 0xe3324f,
+        light: 0xff9aaa,
+        dark: 0x791326,
+        cssColor: '#e3324f',
+    },
+};
+
+const GENERATED_TEAM_BASE_TEXTURES: Record<TeamColour, string> = {
+    blue: SPRITE_PATHS.teamBlueBase,
+    red: SPRITE_PATHS.teamRedBase,
+};
+
+const GENERATED_TEAM_ENEMY_TEXTURES: Record<TeamColour, Record<EnemyTextureTier, string>> = {
+    blue: {
+        1: SPRITE_PATHS.teamBlueMonster1,
+        2: SPRITE_PATHS.teamBlueMonster2,
+        3: SPRITE_PATHS.teamBlueMonster3,
+        4: SPRITE_PATHS.teamBlueMonster4,
+    },
+    red: {
+        1: SPRITE_PATHS.teamRedMonster1,
+        2: SPRITE_PATHS.teamRedMonster2,
+        3: SPRITE_PATHS.teamRedMonster3,
+        4: SPRITE_PATHS.teamRedMonster4,
+    },
+};
+
+const GENERATED_TEAM_TOWER_TEXTURES: Record<TeamColour, Partial<Record<TowerType, string>>> = {
+    blue: {
+        easy: SPRITE_PATHS.teamBlueTowerBasic,
+        spray: SPRITE_PATHS.teamBlueTowerSpray,
+        missile: SPRITE_PATHS.teamBlueTowerMissile,
+        cluster: SPRITE_PATHS.teamBlueTowerCluster,
+        wall: SPRITE_PATHS.teamBlueWall,
+    },
+    red: {
+        easy: SPRITE_PATHS.teamRedTowerBasic,
+        spray: SPRITE_PATHS.teamRedTowerSpray,
+        missile: SPRITE_PATHS.teamRedTowerMissile,
+        cluster: SPRITE_PATHS.teamRedTowerCluster,
+        wall: SPRITE_PATHS.teamRedWall,
+    },
+};
 
 const TOWER_SPRITE_MAX_SIZE = GAME_CONFIG.map.cellSize * 1.2;
 const ENEMY_SPRITE_MIN_SIZE = GAME_CONFIG.map.cellSize * 0.9;
@@ -259,7 +344,7 @@ export class GameScene extends Phaser.Scene {
     private airstrikeImpacts: AirstrikeImpactVisual[] = [];
     private pendingAirstrikes: PendingAirstrike[] = [];
     private baseHealth = GAME_CONFIG.baseHealth;
-    private baseHealthByTeam: Record<TeamId, number> = { solar: GAME_CONFIG.baseHealth, lunar: GAME_CONFIG.baseHealth };
+    private baseHealthByTeam: Record<TeamId, number> = { solar: MULTIPLAYER_BASE_HEALTH, lunar: MULTIPLAYER_BASE_HEALTH };
     private statsByTeam: Record<TeamId, MultiplayerStats> = {
         solar: { kills: 0, answered: 0, correctAnswers: 0 },
         lunar: { kills: 0, answered: 0, correctAnswers: 0 },
@@ -278,9 +363,14 @@ export class GameScene extends Phaser.Scene {
     private nextComputerActionTick = 0;
     private computerActionIndex = 0;
     private computerBuildCursor = 0;
-    private opponentTextureKeys = new Map<string, string>();
+    private teamTextureKeys: Record<TeamColour, Map<string, string>> = {
+        blue: new Map<string, string>(),
+        red: new Map<string, string>(),
+    };
+    private teamBackdropGraphics?: Phaser.GameObjects.Graphics;
     private isMultiplayer = false;
     private localTeamId: TeamId = 'solar';
+    private multiplayerStrengthByTeam: Record<TeamId, number> = { solar: 1, lunar: 1 };
     private flowFields?: Record<TeamId, FlowField>;
     private emergencyFlowFields?: Record<TeamId, FlowField>;
     private threatCostsByTeam?: Record<TeamId, CostGrid>;
@@ -304,6 +394,7 @@ export class GameScene extends Phaser.Scene {
     private manualPauseRequested = false;
     private questionPauseActive = false;
     private spawningUnlocked = false;
+    private placementWarningTimeoutId?: number;
     private debug: DebugToggles = { grid: true, ranges: false, flow: false, costs: false, los: false };
 
     constructor() {
@@ -324,6 +415,10 @@ export class GameScene extends Phaser.Scene {
         const seedParam = new URLSearchParams(window.location.search).get('seed');
         this.isMultiplayer = multiplayerSession.isMultiplayer;
         this.localTeamId = multiplayerSession.localTeamId;
+        this.multiplayerStrengthByTeam = {
+            solar: multiplayerSession.getPlayerStrength('solar'),
+            lunar: multiplayerSession.getPlayerStrength('lunar'),
+        };
         const seed = this.isMultiplayer
             ? multiplayerSession.seed
             : seedParam ? SeededRandom.hash(seedParam) : Date.now() % 1000000000;
@@ -338,8 +433,9 @@ export class GameScene extends Phaser.Scene {
         this.rebuildFlowField();
         this.graphics = this.add.graphics().setDepth(3);
         this.debugGraphics = this.add.graphics().setDepth(5);
-        this.createOpponentTextureVariants();
+        this.createTeamTextureVariants();
         this.createMapSprites();
+        this.createTeamBackdrop();
         this.spawner = new EnemySpawner(this.generatedMap.spawns, GAME_CONFIG.map, new SeededRandom(`${seed}:spawns`));
         this.multiplayerSpawnRng = new SeededRandom(`${seed}:multiplayer-spawns`);
         this.generators = TEAMS.flatMap((teamId) => GENERATOR_TRACKS.map((track) => ({
@@ -395,6 +491,90 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.updateHud();
+        this.render();
+    }
+
+    restartMultiplayerRound(seed: number): void {
+        if (!this.isMultiplayer) {
+            return;
+        }
+        this.panel.close(true);
+        this.multiplayerStrengthByTeam = {
+            solar: multiplayerSession.getPlayerStrength('solar'),
+            lunar: multiplayerSession.getPlayerStrength('lunar'),
+        };
+        if (this.placementWarningTimeoutId !== undefined) {
+            window.clearTimeout(this.placementWarningTimeoutId);
+            this.placementWarningTimeoutId = undefined;
+        }
+        for (const sprite of this.towerSprites.values()) sprite.destroy();
+        for (const sprite of this.enemySprites.values()) sprite.destroy();
+        for (const sprite of this.enemyShadows.values()) sprite.destroy();
+        for (const sprite of this.terrainSprites) sprite.destroy();
+        for (const sprite of this.baseSprites.values()) sprite.destroy();
+        this.teamBackdropGraphics?.destroy();
+        this.towerSprites.clear();
+        this.enemySprites.clear();
+        this.enemyShadows.clear();
+        this.terrainSprites = [];
+        this.baseSprites.clear();
+        this.teamBackdropGraphics = undefined;
+
+        this.generatedMap = generateMultiplayerMap(seed);
+        this.towers = [];
+        this.enemies = [];
+        this.projectiles = [];
+        this.explosions = [];
+        this.airstrikeImpacts = [];
+        this.pendingAirstrikes = [];
+        this.baseHealthByTeam = { solar: MULTIPLAYER_BASE_HEALTH, lunar: MULTIPLAYER_BASE_HEALTH };
+        this.statsByTeam = {
+            solar: { kills: 0, answered: 0, correctAnswers: 0 },
+            lunar: { kills: 0, answered: 0, correctAnswers: 0 },
+        };
+        this.generators = TEAMS.flatMap((teamId) => GENERATOR_TRACKS.map((track) => ({
+            teamId,
+            track,
+            level: 0,
+            progress: 0,
+            spawnCount: 0,
+        })));
+        this.multiplayerSpawnRng = new SeededRandom(`${seed}:multiplayer-spawns`);
+        this.multiplayerTick = 0;
+        this.multiplayerAccumulatorMs = 0;
+        this.multiplayerCommandSequence = 1;
+        this.pendingMultiplayerCommands = [];
+        this.multiplayerChecksums.clear();
+        this.pendingRemoteChecksums.clear();
+        this.lastResyncRequestedTick = -1;
+        this.multiplayerResyncCount = 0;
+        this.nextMultiplayerEnemyId = 1_000_000;
+        this.nextComputerActionTick = 0;
+        this.computerActionIndex = 0;
+        this.computerBuildCursor = 0;
+        this.nextTowerId = 1;
+        this.nextAirstrikeId = 1;
+        this.towerSystem = new TowerSystem();
+        this.projectileSystem = new ProjectileSystem();
+        this.effects = new EffectsSystem();
+        this.elapsedMs = 0;
+        this.baseDamageFlashMs = 0;
+        this.selectedCell = undefined;
+        this.selectedTower = undefined;
+        this.gameOver = false;
+        this.manualPauseRequested = false;
+        this.questionPauseActive = false;
+        this.isPaused = false;
+        this.spawningUnlocked = false;
+
+        this.rebuildFlowField();
+        this.createMapSprites();
+        this.createTeamBackdrop();
+        document.querySelector<HTMLElement>('[data-testid="game-over"]')!.hidden = true;
+        this.renderMonsterGeneratorControls();
+        this.initializeComputerOpponent();
+        this.updateHud();
+        this.syncStatusMessage();
         this.render();
     }
 
@@ -465,6 +645,7 @@ export class GameScene extends Phaser.Scene {
             this.generatedMap.grid,
             GAME_CONFIG.map,
             this.isMultiplayer ? (tower) => this.flowFields![tower.teamId ?? 'lunar'] : this.flowField,
+            (teamId) => this.multiplayerStrengthByTeam[teamId],
         );
         this.projectiles.push(...towerResult.projectiles);
         this.kills += towerResult.kills;
@@ -538,6 +719,9 @@ export class GameScene extends Phaser.Scene {
             this.panel.openBuild(cell, pointerPosition);
         } else {
             this.panel.close();
+            if (this.isMultiplayer && !this.isOnTeamHalf(cell, this.localTeamId)) {
+                this.showPlacementWarning();
+            }
         }
         this.render();
     }
@@ -593,7 +777,14 @@ export class GameScene extends Phaser.Scene {
                 continue;
             }
 
-            const result = this.towerSystem.detonateAirstrike(airstrike.target, this.enemies, this.generatedMap.grid, GAME_CONFIG.map, airstrike.teamId);
+            const result = this.towerSystem.detonateAirstrike(
+                airstrike.target,
+                this.enemies,
+                this.generatedMap.grid,
+                GAME_CONFIG.map,
+                airstrike.teamId,
+                airstrike.teamId === undefined ? 1 : this.multiplayerStrengthByTeam[airstrike.teamId],
+            );
             this.kills += result.kills;
             this.explosions.push(result.explosion);
             this.effects.spawnExplosion(result.explosion.x, result.explosion.y, result.explosion.radius, true);
@@ -615,12 +806,35 @@ export class GameScene extends Phaser.Scene {
     }
 
     private canBuildOnCell(cell: GridPoint, teamId = this.localTeamId): boolean {
-        const onOwnHalf = !this.isMultiplayer
-            || (teamId === 'solar' ? cell.x < this.generatedMap.grid.cols / 2 : cell.x >= this.generatedMap.grid.cols / 2);
+        const onOwnHalf = !this.isMultiplayer || this.isOnTeamHalf(cell, teamId);
         const outsideBases = this.isMultiplayer
             ? TEAMS.every((candidate) => !isBaseFootprintCell(this.generatedMap.bases![candidate], cell, this.generatedMap.grid))
             : !isBaseFootprintCell(this.generatedMap.base, cell, this.generatedMap.grid);
         return onOwnHalf && outsideBases && this.generatedMap.grid.isBuildable(cell.x, cell.y);
+    }
+
+    private isOnTeamHalf(cell: GridPoint, teamId: TeamId): boolean {
+        return teamId === 'solar'
+            ? cell.x < this.generatedMap.grid.cols / 2
+            : cell.x >= this.generatedMap.grid.cols / 2;
+    }
+
+    private showPlacementWarning(): void {
+        const message = document.querySelector<HTMLElement>('[data-testid="game-status-message"]');
+        if (!message) {
+            return;
+        }
+        if (this.placementWarningTimeoutId !== undefined) {
+            window.clearTimeout(this.placementWarningTimeoutId);
+        }
+        message.hidden = false;
+        const colour = this.getTeamColour(this.localTeamId);
+        message.textContent = `${colour.toUpperCase()} SIDE ONLY — you're ${colour}, so build on your side of the map.`;
+        message.dataset.state = 'placement-warning';
+        this.placementWarningTimeoutId = window.setTimeout(() => {
+            this.placementWarningTimeoutId = undefined;
+            this.syncStatusMessage();
+        }, 2_800);
     }
 
     private upgradeExistingTower(tower: TowerState, teamId = this.localTeamId): void {
@@ -693,9 +907,9 @@ export class GameScene extends Phaser.Scene {
             const generator = this.generators.find((candidate) => candidate.teamId === command.teamId && candidate.track === command.track);
             if (generator && generator.level < MAX_MONSTER_GENERATOR_LEVEL) {
                 const wasOff = generator.level === 0;
-                generator.level += 1;
+                generator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, generator.level + 1);
                 if (wasOff) {
-                    this.spawnMultiplayerEnemy(generator);
+                    generator.progress = this.multiplayerStrengthByTeam[command.teamId];
                 }
                 this.renderMonsterGeneratorControls();
             }
@@ -708,7 +922,10 @@ export class GameScene extends Phaser.Scene {
         } else {
             const rivalGenerator = this.generators.find((candidate) => candidate.teamId === opponentOf(command.teamId) && candidate.track === 'nibble');
             if (rivalGenerator) {
-                rivalGenerator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, rivalGenerator.level + command.value);
+                rivalGenerator.level = Math.min(
+                    MAX_MONSTER_GENERATOR_LEVEL,
+                    rivalGenerator.level + getWrongAnswerNibbleLevelIncrease(command.value),
+                );
             }
         }
     }
@@ -822,6 +1039,7 @@ export class GameScene extends Phaser.Scene {
     private createMultiplayerChecksum(): string {
         const state = {
             tick: this.multiplayerTick,
+            strength: this.multiplayerStrengthByTeam,
             health: this.baseHealthByTeam,
             towers: this.towers.map((tower) => ({
                 id: tower.id,
@@ -1007,12 +1225,13 @@ export class GameScene extends Phaser.Scene {
             }
             const mix = getMonsterMix(track, generator.level);
             const unlockLabel = track === 'nibble' ? 'unlock Nibbles' : 'unlock Zappers';
-            level.textContent = generator.level === 0 ? `Off · ${unlockLabel}` : `L${generator.level} · ${mix.description}`;
+            const displayedLevel = Number.isInteger(generator.level) ? `${generator.level}` : generator.level.toFixed(1);
+            level.textContent = generator.level === 0 ? `Off · ${unlockLabel}` : `L${displayedLevel} · ${mix.description}`;
             progress.style.transform = `scaleX(${generator.progress})`;
             button.disabled = generator.level >= MAX_MONSTER_GENERATOR_LEVEL || this.gameOver;
             button.title = generator.level === 0
                 ? `Answer a ${track === 'nibble' ? 'base-level' : 'one-level-higher'} question to ${unlockLabel}`
-                : `Level ${generator.level}: ${mix.description}`;
+                : `Level ${displayedLevel}: ${mix.description}`;
         }
     }
 
@@ -1021,7 +1240,10 @@ export class GameScene extends Phaser.Scene {
             if (generator.level <= 0) {
                 continue;
             }
-            const periodMs = getGeneratorSpawnPeriodMs(generator.track, generator.level);
+            const periodMs = getStrengthAdjustedSpawnPeriodMs(
+                getGeneratorSpawnPeriodMs(generator.track, generator.level),
+                this.multiplayerStrengthByTeam[generator.teamId],
+            );
             generator.progress += deltaMs / periodMs;
             while (generator.progress >= 1) {
                 generator.progress -= 1;
@@ -1343,9 +1565,11 @@ export class GameScene extends Phaser.Scene {
 
     private setupGameOverControls(): void {
         document.querySelector<HTMLButtonElement>('[data-testid="restart-game-button"]')?.addEventListener('click', () => {
-            if (!this.isMultiplayer) {
-                window.sessionStorage.setItem('arithmetic-annihilation:resume-single', 'true');
+            if (this.isMultiplayer) {
+                multiplayerSession.requestRematch();
+                return;
             }
+            window.sessionStorage.setItem('arithmetic-annihilation:resume-single', 'true');
             window.location.reload();
         });
     }
@@ -1562,12 +1786,14 @@ export class GameScene extends Phaser.Scene {
 
     private updateHud(): void {
         const localHealth = this.isMultiplayer ? this.baseHealthByTeam[this.localTeamId] : this.baseHealth;
-        const healthPercent = Math.max(0, Math.min(1, localHealth / GAME_CONFIG.baseHealth));
+        const maximumHealth = this.isMultiplayer ? MULTIPLAYER_BASE_HEALTH : GAME_CONFIG.baseHealth;
+        const healthPercent = Math.max(0, Math.min(1, localHealth / maximumHealth));
         const baseHealthColor = this.formatBaseHealthColor(healthPercent);
         const hud = document.querySelector<HTMLElement>('#hud')!;
         document.querySelector('[data-stat="health"]')!.textContent = `${Math.ceil(localHealth)}`;
         document.querySelector<HTMLElement>('[data-stat="base-fill"]')!.style.transform = `scaleX(${healthPercent})`;
         document.querySelector<HTMLElement>('[data-stat="base-meter"]')!.setAttribute('aria-valuenow', `${Math.ceil(localHealth)}`);
+        document.querySelector<HTMLElement>('[data-stat="base-meter"]')!.setAttribute('aria-valuemax', `${maximumHealth}`);
         hud.style.setProperty('--base-health-color', baseHealthColor);
         document.querySelector('[data-stat="time"]')!.textContent = this.formatTime(this.elapsedMs);
         const localStats = this.isMultiplayer ? this.statsByTeam[this.localTeamId] : { kills: this.kills, answered: this.answered, correctAnswers: this.correctAnswers };
@@ -1661,29 +1887,40 @@ export class GameScene extends Phaser.Scene {
         for (const [index, spawn] of spawns.entries()) {
             const center = cellCenter(spawn, GAME_CONFIG.map);
             const spawnTeam: TeamId = index === 0 ? 'solar' : 'lunar';
-            this.graphics.fillStyle(this.isOpponentTeam(spawnTeam) ? 0x969696 : 0xf3b64b, 1);
+            const visual = this.getTeamVisual(spawnTeam);
+            this.graphics.fillStyle(this.isMultiplayer ? visual.color : 0xf3b64b, 1);
             if (this.isMultiplayer && index === 1) {
                 this.graphics.fillTriangle(center.x + 14, center.y - 14, center.x + 14, center.y + 14, center.x - 16, center.y);
             } else {
                 this.graphics.fillTriangle(center.x - 14, center.y - 14, center.x - 14, center.y + 14, center.x + 16, center.y);
             }
-            this.graphics.lineStyle(2, this.isOpponentTeam(spawnTeam) ? 0x3f3f3f : 0x3b2106, 0.7);
+            this.graphics.lineStyle(2, this.isMultiplayer ? visual.dark : 0x3b2106, 0.82);
             this.graphics.strokeCircle(center.x, center.y, 18);
         }
-        this.graphics.lineStyle(2, 0x132119, 0.28);
-        const bases = this.isMultiplayer ? Object.values(this.generatedMap.bases!) : [base];
-        for (const renderedBase of bases) {
+        const renderedBases = this.isMultiplayer
+            ? TEAMS.map((teamId) => ({ teamId, base: this.generatedMap.bases![teamId] }))
+            : [{ teamId: undefined, base }];
+        for (const rendered of renderedBases) {
+            this.graphics.lineStyle(
+                this.isMultiplayer ? 4 : 2,
+                this.isMultiplayer ? this.getTeamVisual(rendered.teamId).color : 0x132119,
+                this.isMultiplayer ? 0.82 : 0.28,
+            );
             this.graphics.strokeRect(
-                originX + (renderedBase.x - 1) * cellSize + 1,
-                originY + (renderedBase.y - 1) * cellSize + 1,
+                originX + (rendered.base.x - 1) * cellSize + 1,
+                originY + (rendered.base.y - 1) * cellSize + 1,
                 cellSize * 3 - 2,
                 cellSize * 3 - 2,
             );
         }
         if (this.isMultiplayer) {
             const splitX = originX + grid.cols / 2 * cellSize;
-            this.graphics.lineStyle(3, 0xf7f0d6, 0.32);
-            this.graphics.lineBetween(splitX, originY, splitX, originY + grid.rows * cellSize);
+            const solarVisual = this.getTeamVisual('solar');
+            const lunarVisual = this.getTeamVisual('lunar');
+            this.graphics.lineStyle(3, solarVisual.color, 0.86);
+            this.graphics.lineBetween(splitX - 2, originY, splitX - 2, originY + grid.rows * cellSize);
+            this.graphics.lineStyle(3, lunarVisual.color, 0.86);
+            this.graphics.lineBetween(splitX + 2, originY, splitX + 2, originY + grid.rows * cellSize);
         }
     }
 
@@ -1710,7 +1947,7 @@ export class GameScene extends Phaser.Scene {
             }
             const center = cellCenter({ x: tower.gridX, y: tower.gridY }, GAME_CONFIG.map);
             const stats = getTowerStats(tower);
-            const rangeColor = this.isOpponentTeam(tower.teamId) ? 0x969696 : TOWER_COLORS[tower.type];
+            const rangeColor = this.isMultiplayer ? this.getTeamVisual(tower.teamId).color : TOWER_COLORS[tower.type];
             this.graphics.lineStyle(2, rangeColor, tower === this.selectedTower ? 0.54 : 0.24);
             this.graphics.strokeCircle(center.x, center.y, stats.range);
         }
@@ -1718,7 +1955,6 @@ export class GameScene extends Phaser.Scene {
 
     private renderTowers(): void {
         const activeIds = new Set<number>();
-        const { cellSize } = GAME_CONFIG.map;
         for (const tower of this.towers) {
             activeIds.add(tower.id);
             const center = cellCenter({ x: tower.gridX, y: tower.gridY }, GAME_CONFIG.map);
@@ -1741,10 +1977,10 @@ export class GameScene extends Phaser.Scene {
             }
             let sprite = this.towerSprites.get(tower.id);
             if (!sprite) {
-                sprite = this.add.image(center.x, center.y, this.getTeamTextureKey(TOWER_TEXTURES[tower.type], tower.teamId)).setDepth(2);
+                sprite = this.add.image(center.x, center.y, this.getTowerTextureKey(tower)).setDepth(2);
                 this.towerSprites.set(tower.id, sprite);
             }
-            sprite.setTexture(this.getTeamTextureKey(TOWER_TEXTURES[tower.type], tower.teamId));
+            sprite.setTexture(this.getTowerTextureKey(tower));
             sprite.setPosition(center.x, center.y);
             this.setSpriteMaxSize(sprite, TOWER_SPRITE_MAX_SIZE);
             sprite.setAlpha(tower === this.selectedTower ? 1 : 0.96);
@@ -1777,14 +2013,14 @@ export class GameScene extends Phaser.Scene {
     private renderFlamethrowerTower(tower: TowerState, center: Vec2): void {
         const radius = GAME_CONFIG.map.cellSize * 0.34;
         const angle = tower.flameAngleRadians ?? 0;
-        const opponent = this.isOpponentTeam(tower.teamId);
-        this.graphics.fillStyle(opponent ? 0x303030 : 0x3a0c08, 0.64);
+        const visual = this.getTeamVisual(tower.teamId);
+        this.graphics.fillStyle(this.isMultiplayer ? visual.dark : 0x3a0c08, 0.64);
         this.graphics.fillCircle(center.x + 2, center.y + 3, radius * 1.12);
-        this.graphics.fillStyle(opponent ? 0x858585 : 0xff3030, tower === this.selectedTower ? 1 : 0.94);
+        this.graphics.fillStyle(this.isMultiplayer ? visual.color : 0xff3030, tower === this.selectedTower ? 1 : 0.94);
         this.graphics.fillCircle(center.x, center.y, radius);
-        this.graphics.fillStyle(opponent ? 0xb8b8b8 : 0xff8a16, 0.82);
+        this.graphics.fillStyle(this.isMultiplayer ? visual.light : 0xff8a16, 0.82);
         this.graphics.fillCircle(center.x - radius * 0.22, center.y - radius * 0.24, radius * 0.28);
-        this.graphics.lineStyle(4, opponent ? 0xe0e0e0 : 0xfff1a8, 0.95);
+        this.graphics.lineStyle(4, this.isMultiplayer ? visual.light : 0xfff1a8, 0.95);
         this.graphics.beginPath();
         this.graphics.moveTo(center.x + Math.cos(angle) * radius * 0.2, center.y + Math.sin(angle) * radius * 0.2);
         this.graphics.lineTo(center.x + Math.cos(angle) * radius * 1.18, center.y + Math.sin(angle) * radius * 1.18);
@@ -1808,7 +2044,8 @@ export class GameScene extends Phaser.Scene {
         const barWidth = GAME_CONFIG.map.cellSize * 0.64;
         this.graphics.fillStyle(0x101614, 0.9);
         this.graphics.fillRect(center.x - barWidth / 2, center.y + 16, barWidth, 4);
-        this.graphics.fillStyle(healthPercent > 0.4 ? 0xf7f0d6 : 0xff9f1c, 1);
+        const healthyColor = this.isMultiplayer ? this.getTeamVisual(tower.teamId).color : 0xf7f0d6;
+        this.graphics.fillStyle(healthPercent > 0.4 ? healthyColor : 0xff9f1c, 1);
         this.graphics.fillRect(center.x - barWidth / 2, center.y + 16, barWidth * healthPercent, 4);
     }
 
@@ -1845,12 +2082,17 @@ export class GameScene extends Phaser.Scene {
             this.setEnemySpriteSize(sprite, spriteSize);
             sprite.setFlipX(enemy.teamId === 'lunar');
             sprite.setDepth(depth);
+            if (this.isMultiplayer && enemy.hurtFlashMs > 0) {
+                sprite.setTintFill();
+            } else {
+                sprite.clearTint();
+            }
 
             const barWidth = enemy.radius * 2.1;
             const healthPercent = Math.max(0, enemy.health / enemy.maxHealth);
             this.graphics.fillStyle(0x111611, 0.88);
             this.graphics.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.radius - 8, barWidth, 4);
-            const healthyColor = this.isOpponentTeam(enemy.teamId) ? 0xa8a8a8 : 0x66d17a;
+            const healthyColor = this.isMultiplayer ? this.getTeamVisual(enemy.teamId).color : 0x66d17a;
             this.graphics.fillStyle(healthPercent > 0.45 ? healthyColor : 0xe85d75, 1);
             this.graphics.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.radius - 8, barWidth * healthPercent, 4);
         }
@@ -1885,9 +2127,10 @@ export class GameScene extends Phaser.Scene {
 
     private renderProjectiles(): void {
         for (const projectile of this.projectiles) {
+            const teamVisual = this.getTeamVisual(projectile.teamId);
             if (projectile.type === 'missile') {
                 const angle = Math.atan2(projectile.vy, projectile.vx);
-                this.graphics.fillStyle(0xbde0fe, 1);
+                this.graphics.fillStyle(this.isMultiplayer ? teamVisual.light : 0xbde0fe, 1);
                 this.graphics.save();
                 this.graphics.translateCanvas(projectile.x, projectile.y);
                 this.graphics.rotateCanvas(angle);
@@ -1908,13 +2151,13 @@ export class GameScene extends Phaser.Scene {
                 this.graphics.fillStyle(color, 1);
                 this.graphics.fillCircle(projectile.x, projectile.y, projectile.radius * (0.75 + heat * 0.55));
             } else if (projectile.type === 'cluster') {
-                this.graphics.fillStyle(0xf15bb5, 0.24);
+                this.graphics.fillStyle(this.isMultiplayer ? teamVisual.color : 0xf15bb5, 0.24);
                 this.graphics.fillCircle(projectile.x, projectile.y, projectile.radius * 2.2);
-                this.graphics.fillStyle(0xffc2f4, 1);
+                this.graphics.fillStyle(this.isMultiplayer ? teamVisual.light : 0xffc2f4, 1);
                 this.graphics.fillCircle(projectile.x, projectile.y, projectile.radius);
             } else if (projectile.visualType === 'spray') {
                 const angle = Math.atan2(projectile.vy, projectile.vx);
-                this.graphics.lineStyle(2, 0x42f5ff, 0.42);
+                this.graphics.lineStyle(2, this.isMultiplayer ? teamVisual.color : 0x42f5ff, 0.52);
                 this.graphics.beginPath();
                 this.graphics.moveTo(projectile.previousX, projectile.previousY);
                 this.graphics.lineTo(projectile.x, projectile.y);
@@ -1922,7 +2165,7 @@ export class GameScene extends Phaser.Scene {
                 this.graphics.save();
                 this.graphics.translateCanvas(projectile.x, projectile.y);
                 this.graphics.rotateCanvas(angle);
-                this.graphics.fillStyle(0xff4fd8, 0.24);
+                this.graphics.fillStyle(this.isMultiplayer ? teamVisual.color : 0xff4fd8, 0.24);
                 this.graphics.fillEllipse(0, 0, projectile.radius * 4.2, projectile.radius * 2.4);
                 this.graphics.fillStyle(0xe7ffff, 1);
                 this.graphics.fillEllipse(0, 0, projectile.radius * 2.1, projectile.radius * 1.15);
@@ -1931,14 +2174,14 @@ export class GameScene extends Phaser.Scene {
                 const speed = Math.hypot(projectile.vx, projectile.vy) || 1;
                 const dirX = projectile.vx / speed;
                 const dirY = projectile.vy / speed;
-                this.graphics.lineStyle(3, 0xfff7ce, 0.64);
+                this.graphics.lineStyle(3, this.isMultiplayer ? teamVisual.light : 0xfff7ce, 0.72);
                 this.graphics.beginPath();
                 this.graphics.moveTo(projectile.x - dirX * 20, projectile.y - dirY * 20);
                 this.graphics.lineTo(projectile.x, projectile.y);
                 this.graphics.strokePath();
-                this.graphics.fillStyle(0xfffdf3, 0.28);
+                this.graphics.fillStyle(this.isMultiplayer ? teamVisual.color : 0xfffdf3, 0.3);
                 this.graphics.fillCircle(projectile.x, projectile.y, projectile.radius * 2.1);
-                this.graphics.fillStyle(0xf7f0d6, 1);
+                this.graphics.fillStyle(this.isMultiplayer ? teamVisual.light : 0xf7f0d6, 1);
                 this.graphics.fillCircle(projectile.x, projectile.y, projectile.radius);
             }
         }
@@ -2026,6 +2269,7 @@ export class GameScene extends Phaser.Scene {
     private renderAirstrikes(): void {
         const { cellSize, originX, originY } = GAME_CONFIG.map;
         for (const airstrike of this.pendingAirstrikes) {
+            const visual = this.getTeamVisual(airstrike.teamId);
             const targetCenter = cellCenter(airstrike.target, GAME_CONFIG.map);
             const progress = Phaser.Math.Clamp(airstrike.elapsedMs / airstrike.delayMs, 0, 1);
             const planeX = Phaser.Math.Linear(airstrike.start.x, airstrike.end.x, progress);
@@ -2034,19 +2278,19 @@ export class GameScene extends Phaser.Scene {
             const targetLeft = originX + airstrike.target.x * cellSize;
             const targetTop = originY + airstrike.target.y * cellSize;
 
-            this.graphics.lineStyle(2, 0xf7f0d6, 0.86);
+            this.graphics.lineStyle(2, this.isMultiplayer ? visual.light : 0xf7f0d6, 0.86);
             this.graphics.strokeCircle(targetCenter.x, targetCenter.y, cellSize * 0.34);
             this.graphics.lineBetween(targetCenter.x - cellSize * 0.46, targetCenter.y, targetCenter.x + cellSize * 0.46, targetCenter.y);
             this.graphics.lineBetween(targetCenter.x, targetCenter.y - cellSize * 0.46, targetCenter.x, targetCenter.y + cellSize * 0.46);
-            this.graphics.lineStyle(2, 0xffe66d, 0.72);
+            this.graphics.lineStyle(2, this.isMultiplayer ? visual.color : 0xffe66d, 0.82);
             this.graphics.strokeRect(targetLeft + 2, targetTop + 2, cellSize - 4, cellSize - 4);
 
             this.graphics.save();
             this.graphics.translateCanvas(planeX, planeY);
             this.graphics.rotateCanvas(angle);
-            this.graphics.fillStyle(0x101614, 0.96);
+            this.graphics.fillStyle(this.isMultiplayer ? visual.dark : 0x101614, 0.96);
             this.graphics.fillTriangle(cellSize * 0.48, 0, -cellSize * 0.34, -cellSize * 0.26, -cellSize * 0.34, cellSize * 0.26);
-            this.graphics.lineStyle(2, 0xf7f0d6, 0.68);
+            this.graphics.lineStyle(2, this.isMultiplayer ? visual.light : 0xf7f0d6, 0.68);
             this.graphics.lineBetween(-cellSize * 0.5, 0, -cellSize * 1.05, 0);
             this.graphics.restore();
         }
@@ -2136,8 +2380,7 @@ export class GameScene extends Phaser.Scene {
         const { originX, originY, cellSize } = GAME_CONFIG.map;
 
         grid.forEachCell((x, y, terrain) => {
-            const cellTeam: TeamId = x < grid.cols / 2 ? 'solar' : 'lunar';
-            const textureKey = this.getTeamTextureKey(this.getTerrainTextureKey(terrain, x, y), cellTeam);
+            const textureKey = this.getTerrainTextureKey(terrain, x, y);
             const sprite = this.add
                 .image(originX + x * cellSize + cellSize / 2, originY + y * cellSize + cellSize / 2, textureKey)
                 .setDisplaySize(cellSize, cellSize)
@@ -2148,13 +2391,32 @@ export class GameScene extends Phaser.Scene {
         if (this.isMultiplayer) {
             for (const teamId of TEAMS) {
                 const baseCenter = cellCenter(this.generatedMap.bases![teamId], GAME_CONFIG.map);
-                const sprite = this.add.image(baseCenter.x, baseCenter.y, this.getTeamTextureKey(SPRITE_PATHS.base, teamId)).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
+                const textureKey = GENERATED_TEAM_BASE_TEXTURES[this.getTeamColour(teamId)];
+                const sprite = this.add.image(baseCenter.x, baseCenter.y, textureKey).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
                 this.baseSprites.set(teamId, sprite);
             }
             this.baseSprite = this.baseSprites.get(this.localTeamId)!;
         } else {
             const baseCenter = cellCenter(base, GAME_CONFIG.map);
             this.baseSprite = this.add.image(baseCenter.x, baseCenter.y, SPRITE_PATHS.base).setDisplaySize(cellSize * 3, cellSize * 3).setDepth(1);
+        }
+    }
+
+    private createTeamBackdrop(): void {
+        if (!this.isMultiplayer) {
+            return;
+        }
+        const { grid } = this.generatedMap;
+        const { originX, originY, cellSize } = GAME_CONFIG.map;
+        const halfWidth = grid.cols * cellSize / 2;
+        const height = grid.rows * cellSize;
+        this.teamBackdropGraphics = this.add.graphics().setDepth(0.45);
+
+        for (const teamId of TEAMS) {
+            const visual = this.getTeamVisual(teamId);
+            const left = teamId === 'solar' ? originX : originX + halfWidth;
+            this.teamBackdropGraphics.lineStyle(5, visual.color, 0.78);
+            this.teamBackdropGraphics.strokeRect(left + 2, originY + 2, halfWidth - 4, height - 4);
         }
     }
 
@@ -2166,44 +2428,73 @@ export class GameScene extends Phaser.Scene {
 
     private getEnemyTextureKey(enemy: EnemyState): string {
         const tier = this.getEnemyTextureTier(enemy);
+        if (this.isMultiplayer && enemy.teamId !== undefined) {
+            return GENERATED_TEAM_ENEMY_TEXTURES[this.getTeamColour(enemy.teamId)][tier];
+        }
         const state = this.getEnemyTextureState(enemy);
         return this.getTeamTextureKey(ENEMY_TEXTURES[tier][state], enemy.teamId);
     }
 
-    private createOpponentTextureVariants(): void {
+    private getTowerTextureKey(tower: TowerState): string {
+        if (this.isMultiplayer && tower.teamId !== undefined) {
+            const generatedTexture = GENERATED_TEAM_TOWER_TEXTURES[this.getTeamColour(tower.teamId)][tower.type];
+            if (generatedTexture) {
+                return generatedTexture;
+            }
+        }
+        return this.getTeamTextureKey(TOWER_TEXTURES[tower.type], tower.teamId);
+    }
+
+    private createTeamTextureVariants(): void {
         if (!this.isMultiplayer) {
             return;
         }
-        const sourceKeys = new Set<string>(Object.values(SPRITE_PATHS));
-        for (const sourceKey of sourceKeys) {
-            const opponentKey = `opponent:${sourceKey}`;
-            this.opponentTextureKeys.set(sourceKey, opponentKey);
-            if (this.textures.exists(opponentKey)) {
-                continue;
+        const sourceKeys = new Set<string>([
+            SPRITE_PATHS.base,
+            ...Object.values(TOWER_TEXTURES),
+            ...Object.values(ENEMY_TEXTURES).flatMap((states) => Object.values(states)),
+        ]);
+        for (const colour of Object.keys(TEAM_VISUALS) as TeamColour[]) {
+            const visual = TEAM_VISUALS[colour];
+            for (const sourceKey of sourceKeys) {
+                const textureKey = `${visual.texturePrefix}:${sourceKey}`;
+                this.teamTextureKeys[colour].set(sourceKey, textureKey);
+                if (this.textures.exists(textureKey)) {
+                    continue;
+                }
+                const source = this.textures.get(sourceKey).getSourceImage() as CanvasImageSource & { width: number; height: number };
+                const texture = this.textures.createCanvas(textureKey, source.width, source.height);
+                if (!texture) {
+                    continue;
+                }
+                const context = texture.context;
+                context.save();
+                context.filter = 'grayscale(0.28) saturate(1.15) contrast(1.06)';
+                context.drawImage(source, 0, 0, source.width, source.height);
+                context.globalCompositeOperation = 'source-atop';
+                context.globalAlpha = 0.42;
+                context.fillStyle = visual.cssColor;
+                context.fillRect(0, 0, source.width, source.height);
+                context.restore();
+                texture.refresh();
             }
-            const source = this.textures.get(sourceKey).getSourceImage() as CanvasImageSource & { width: number; height: number };
-            const texture = this.textures.createCanvas(opponentKey, source.width, source.height);
-            if (!texture) {
-                continue;
-            }
-            const context = texture.context;
-            context.save();
-            context.filter = 'grayscale(1)';
-            context.drawImage(source, 0, 0, source.width, source.height);
-            context.restore();
-            texture.refresh();
         }
     }
 
     private getTeamTextureKey(sourceKey: string, teamId?: TeamId): string {
-        if (!this.isOpponentTeam(teamId)) {
+        if (!this.isMultiplayer || teamId === undefined) {
             return sourceKey;
         }
-        return this.opponentTextureKeys.get(sourceKey) ?? sourceKey;
+        const colour = this.getTeamColour(teamId);
+        return this.teamTextureKeys[colour].get(sourceKey) ?? sourceKey;
     }
 
-    private isOpponentTeam(teamId?: TeamId): boolean {
-        return this.isMultiplayer && teamId !== undefined && teamId !== this.localTeamId;
+    private getTeamColour(teamId?: TeamId): TeamColour {
+        return teamId === 'lunar' ? 'red' : 'blue';
+    }
+
+    private getTeamVisual(teamId?: TeamId): typeof TEAM_VISUALS[TeamColour] {
+        return TEAM_VISUALS[this.getTeamColour(teamId)];
     }
 
     private getEnemyTextureTier(enemy: EnemyState): EnemyTextureTier {
@@ -2239,8 +2530,26 @@ export class GameScene extends Phaser.Scene {
             }
             return null;
         };
+        const getOpponentHalfCell = () => {
+            const opponentTeam = opponentOf(this.localTeamId);
+            const midpoint = this.generatedMap.grid.cols / 2;
+            const startX = opponentTeam === 'solar' ? 0 : midpoint;
+            const endX = opponentTeam === 'solar' ? midpoint : this.generatedMap.grid.cols;
+            for (let y = 0; y < this.generatedMap.grid.rows; y += 1) {
+                for (let x = startX; x < endX; x += 1) {
+                    const cell = { x, y };
+                    const outsideBases = TEAMS.every((teamId) => !isBaseFootprintCell(this.generatedMap.bases![teamId], cell, this.generatedMap.grid));
+                    if (outsideBases && this.generatedMap.grid.isBuildable(x, y) && !this.findTowerAt(x, y)) {
+                        const center = cellCenter(cell, GAME_CONFIG.map);
+                        return { x, y, worldX: center.x, worldY: center.y };
+                    }
+                }
+            }
+            return null;
+        };
         const hooks = {
             getFirstBuildableCell,
+            getOpponentHalfCell,
             getBaseCell: () => {
                 const center = cellCenter(this.generatedMap.base, GAME_CONFIG.map);
                 return { ...this.generatedMap.base, worldX: center.x, worldY: center.y };
@@ -2280,6 +2589,15 @@ export class GameScene extends Phaser.Scene {
                     this.generators.find((generator) => generator.teamId === teamId && generator.track === track)?.level ?? 0,
                 ])),
             ])),
+            getMultiplayerStrengths: () => ({ ...this.multiplayerStrengthByTeam }),
+            getGeneratorSpawnPeriodForTeam: (teamId: TeamId, track: MonsterGeneratorTrack) => {
+                const generator = this.generators.find((candidate) => candidate.teamId === teamId && candidate.track === track);
+                if (!generator || generator.level <= 0) return Number.POSITIVE_INFINITY;
+                return getStrengthAdjustedSpawnPeriodMs(
+                    getGeneratorSpawnPeriodMs(track, generator.level),
+                    this.multiplayerStrengthByTeam[teamId],
+                );
+            },
             getMultiplayerResyncCount: () => this.multiplayerResyncCount,
             isComputerOpponent: () => multiplayerSession.isComputerOpponent,
             getTerrainTextureKeys: () => this.terrainSprites.map((sprite) => sprite.texture.key),
@@ -2289,6 +2607,8 @@ export class GameScene extends Phaser.Scene {
             }),
             getTowerTextureKeys: () => [...this.towerSprites.values()].map((sprite) => sprite.texture.key),
             getEnemyTextureKeys: () => [...this.enemySprites.values()].map((sprite) => sprite.texture.key),
+            getMultiplayerSeed: () => multiplayerSession.seed,
+            finishMultiplayerGame: (winner: TeamId) => this.endGame(winner),
             getBaseHealth: () => this.baseHealth,
             getElapsedMs: () => this.elapsedMs,
             isPaused: () => this.isPaused,
