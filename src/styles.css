@@ -120,6 +120,41 @@
   font: inherit;
 }
 
+.multiplayer-setup .player-strength-field {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(117, 183, 255, 0.07);
+}
+
+.player-strength-field > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.player-strength-field output {
+  color: var(--amber);
+  font-weight: 800;
+}
+
+.multiplayer-setup .player-strength-field input[type="range"] {
+  min-height: 24px;
+  padding: 0;
+  accent-color: var(--amber);
+}
+
+.player-strength-field small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.lobby-player small {
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .setup-divider {
   display: flex;
   align-items: center;
@@ -1340,6 +1375,28 @@ html.is-mobile .multiplayer-setup select {
   min-height: 34px;
   padding: 0 9px;
   font-size: 13px;
+}
+
+html.is-mobile .multiplayer-setup .player-strength-field {
+  grid-column: 1 / -1;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  padding: 4px 8px;
+}
+
+html.is-mobile .player-strength-field > span,
+html.is-mobile .player-strength-field small {
+  grid-column: 1;
+}
+
+html.is-mobile .player-strength-field small {
+  display: none;
+}
+
+html.is-mobile .multiplayer-setup .player-strength-field input[type="range"] {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
 }
 
 html.is-mobile .multiplayer-setup .primary-button {

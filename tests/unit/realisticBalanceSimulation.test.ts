@@ -46,6 +46,17 @@ describe('realistic multiplayer self-play', () => {
         expect(first.towers.lunar.length).toBeGreaterThan(1);
     });
 
+    it('applies player strength to both real tower damage and monster cadence', () => {
+        const fullStrength = { ...DEFAULT_REALISTIC_STRATEGIES.balanced, name: 'full-strength', strength: 1 };
+        const tenPercent = { ...DEFAULT_REALISTIC_STRATEGIES.balanced, name: 'ten-percent', strength: 0.1 };
+        const games = playSeries('strength-handicap', fullStrength, tenPercent, 20, 4 * 60);
+        const fullStrengthWins = games.filter(({ result, firstTeam }) => result.winner === firstTeam).length;
+        const reducedStrengthWins = games.filter(({ result, firstTeam }) => result.winner === (firstTeam === 'solar' ? 'lunar' : 'solar')).length;
+
+        expect(fullStrengthWins).toBeGreaterThanOrEqual(16);
+        expect(reducedStrengthWins).toBeLessThanOrEqual(2);
+    }, 30_000);
+
     it('keeps every weapon specialist competitive with a mixed defense', () => {
         const reports = (['easy', 'spray', 'missile', 'flamethrower', 'cluster'] as const).map((type) => {
             const games = playSeries(`weapon-field-${type}`, singleWeaponStrategy(type), DEFAULT_REALISTIC_STRATEGIES.balanced, 20);

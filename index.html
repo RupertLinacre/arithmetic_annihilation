@@ -45,6 +45,12 @@
                             <option value="year4">Year 4</option><option value="year5">Year 5</option><option value="year6">Year 6</option>
                         </select>
                     </label>
+                    <label class="player-strength-field">
+                        <span>Your strength <output data-player-strength-output>100%</output></span>
+                        <input name="player-strength" type="range" min="10" max="100" step="10" value="100"
+                            aria-label="Your multiplayer strength" data-testid="player-strength-slider" />
+                        <small>Lower this to make your towers weaker and your monsters spawn more slowly.</small>
+                    </label>
                     <button type="button" class="primary-button" data-testid="computer-match-button">Versus computer</button>
                     <div class="setup-divider"><span>or play a friend</span></div>
                     <button type="button" class="primary-button" data-testid="create-match-button">Create a match</button>

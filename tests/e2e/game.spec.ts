@@ -22,6 +22,8 @@ declare global {
             getGeneratorLevel: () => number;
             getGeneratorLevels: () => { solar: number; lunar: number };
             getGeneratorLevelsByTrack: () => Record<'solar' | 'lunar', Record<'nibble' | 'advanced', number>>;
+            getMultiplayerStrengths: () => Record<'solar' | 'lunar', number>;
+            getGeneratorSpawnPeriodForTeam: (teamId: 'solar' | 'lunar', track: 'nibble' | 'advanced') => number;
             getMultiplayerResyncCount: () => number;
             isComputerOpponent: () => boolean;
             getTerrainTextureKeys: () => string[];
@@ -385,15 +387,32 @@ test('versus computer starts a local multiplayer battle with opponent visuals', 
     await page.goto('/');
     await page.getByTestId('two-player-button').click();
     await expect(page.getByTestId('computer-match-button')).toBeVisible();
+    await page.getByTestId('player-strength-slider').evaluate((element) => {
+        const slider = element as HTMLInputElement;
+        slider.value = '10';
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('[data-player-strength-output]')).toHaveText('10%');
     await page.getByTestId('computer-match-button').click();
     await expect(page.locator('canvas')).toBeVisible();
     await expect(page.locator('[data-stat="health"]')).toHaveText('150');
     await expect(page.locator('[data-stat="base-meter"]')).toHaveAttribute('aria-valuemax', '150');
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.isComputerOpponent())).toBe(true);
+    expect(await page.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerStrengths())).toEqual({ solar: 0.1, lunar: 1 });
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevels().lunar)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getEnemyCount())).toBeGreaterThan(0);
+
+    await page.locator('[data-generator-track="nibble"]').click();
+    const generatorAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await page.getByTestId('answer-input').fill(generatorAnswer!);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getGeneratorLevelsByTrack().solar.nibble)).toBe(1);
+    const generatorPeriods = await page.evaluate(() => ({
+        reduced: window.arithmeticAnnihilation!.getGeneratorSpawnPeriodForTeam('solar', 'nibble'),
+        normal: window.arithmeticAnnihilation!.getGeneratorSpawnPeriodForTeam('lunar', 'nibble'),
+    }));
+    expect(generatorPeriods.reduced).toBeCloseTo(generatorPeriods.normal * 10);
 
     const visualKeys = await page.evaluate(() => ({
         terrain: window.arithmeticAnnihilation!.getTerrainTextureKeys(),
@@ -430,6 +449,11 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await host.goto('/');
     await host.getByTestId('two-player-button').click();
     await expect(host.getByTestId('lobby-team-colour-banner')).toBeHidden();
+    await host.getByTestId('player-strength-slider').evaluate((element) => {
+        const slider = element as HTMLInputElement;
+        slider.value = '50';
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     await host.getByTestId('create-match-button').click();
     await expect(host.getByTestId('lobby-team-colour-banner')).toContainText('You are blue');
     const code = (await host.locator('[data-invite-code]').textContent())!.trim();
@@ -439,6 +463,11 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await guest.getByTestId('two-player-button').click();
     await expect(guest.getByTestId('lobby-team-colour-banner')).toBeHidden();
     await guest.locator('[name="player-name"]').fill('Guest');
+    await guest.getByTestId('player-strength-slider').evaluate((element) => {
+        const slider = element as HTMLInputElement;
+        slider.value = '20';
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     await guest.locator('[name="invite-code"]').fill(code);
     await guest.getByTestId('join-match-button').click();
     await expect(guest.getByTestId('lobby-team-colour-banner')).toContainText('You are red');
@@ -446,6 +475,10 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await expect(host.locator('.lobby-player.opponent span')).toHaveText('Opponent · Red');
     await expect(guest.locator('.lobby-player.player span')).toHaveText('You · Red');
     await expect(guest.locator('.lobby-player.opponent span')).toHaveText('Opponent · Blue');
+    await expect(host.locator('.lobby-player.player small')).toHaveText('50% strength');
+    await expect(host.locator('.lobby-player.opponent small')).toHaveText('20% strength');
+    await expect(guest.locator('.lobby-player.player small')).toHaveText('20% strength');
+    await expect(guest.locator('.lobby-player.opponent small')).toHaveText('50% strength');
 
     await expect(host.locator('[data-start-match]')).toBeEnabled({ timeout: 20_000 });
     await host.locator('[data-start-match]').click();
@@ -460,6 +493,8 @@ test('two players share scheduled actions and continue simulating locally', asyn
     await expect(host.getByTestId('select-airstrike')).toBeVisible();
     await expect(host.locator('[data-stat="rival-base-status"]')).toBeVisible();
     await expect(guest.locator('[data-stat="rival-base-status"]')).toBeVisible();
+    expect(await host.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerStrengths())).toEqual({ solar: 0.5, lunar: 0.2 });
+    expect(await guest.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerStrengths())).toEqual({ solar: 0.5, lunar: 0.2 });
 
     const hostBases = await host.evaluate(() => window.arithmeticAnnihilation!.getBaseTextureKeys());
     const guestBases = await guest.evaluate(() => window.arithmeticAnnihilation!.getBaseTextureKeys());
@@ -528,6 +563,8 @@ test('two players share scheduled actions and continue simulating locally', asyn
     }).toBe(true);
     await expect.poll(() => host.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(0);
     await expect.poll(() => guest.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(0);
+    expect(await host.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerStrengths())).toEqual({ solar: 0.5, lunar: 0.2 });
+    expect(await guest.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerStrengths())).toEqual({ solar: 0.5, lunar: 0.2 });
     expect(errors).toEqual([]);
 
     const guestElapsedBeforeDisconnect = await guest.evaluate(() => window.arithmeticAnnihilation!.getElapsedMs());

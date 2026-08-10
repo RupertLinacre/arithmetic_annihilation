@@ -19,6 +19,7 @@ import {
     MAX_MONSTER_GENERATOR_LEVEL,
 } from '../multiplayer/MonsterGenerator';
 import { MULTIPLAYER_BASE_HEALTH } from '../multiplayer/BalanceConfig';
+import { getStrengthAdjustedSpawnPeriodMs } from '../multiplayer/PlayerStrength';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
 import { calculateTowerThreatCosts, createEmptyCostGrid, type CostGrid, getTowerStats } from '../pathfinding/ThreatMap';
 import { EnemySpawner, isGameDifficulty, type GameDifficulty } from '../systems/EnemySpawner';
@@ -369,6 +370,7 @@ export class GameScene extends Phaser.Scene {
     private teamBackdropGraphics?: Phaser.GameObjects.Graphics;
     private isMultiplayer = false;
     private localTeamId: TeamId = 'solar';
+    private multiplayerStrengthByTeam: Record<TeamId, number> = { solar: 1, lunar: 1 };
     private flowFields?: Record<TeamId, FlowField>;
     private emergencyFlowFields?: Record<TeamId, FlowField>;
     private threatCostsByTeam?: Record<TeamId, CostGrid>;
@@ -413,6 +415,10 @@ export class GameScene extends Phaser.Scene {
         const seedParam = new URLSearchParams(window.location.search).get('seed');
         this.isMultiplayer = multiplayerSession.isMultiplayer;
         this.localTeamId = multiplayerSession.localTeamId;
+        this.multiplayerStrengthByTeam = {
+            solar: multiplayerSession.getPlayerStrength('solar'),
+            lunar: multiplayerSession.getPlayerStrength('lunar'),
+        };
         const seed = this.isMultiplayer
             ? multiplayerSession.seed
             : seedParam ? SeededRandom.hash(seedParam) : Date.now() % 1000000000;
@@ -493,6 +499,10 @@ export class GameScene extends Phaser.Scene {
             return;
         }
         this.panel.close(true);
+        this.multiplayerStrengthByTeam = {
+            solar: multiplayerSession.getPlayerStrength('solar'),
+            lunar: multiplayerSession.getPlayerStrength('lunar'),
+        };
         if (this.placementWarningTimeoutId !== undefined) {
             window.clearTimeout(this.placementWarningTimeoutId);
             this.placementWarningTimeoutId = undefined;
@@ -635,6 +645,7 @@ export class GameScene extends Phaser.Scene {
             this.generatedMap.grid,
             GAME_CONFIG.map,
             this.isMultiplayer ? (tower) => this.flowFields![tower.teamId ?? 'lunar'] : this.flowField,
+            (teamId) => this.multiplayerStrengthByTeam[teamId],
         );
         this.projectiles.push(...towerResult.projectiles);
         this.kills += towerResult.kills;
@@ -766,7 +777,14 @@ export class GameScene extends Phaser.Scene {
                 continue;
             }
 
-            const result = this.towerSystem.detonateAirstrike(airstrike.target, this.enemies, this.generatedMap.grid, GAME_CONFIG.map, airstrike.teamId);
+            const result = this.towerSystem.detonateAirstrike(
+                airstrike.target,
+                this.enemies,
+                this.generatedMap.grid,
+                GAME_CONFIG.map,
+                airstrike.teamId,
+                airstrike.teamId === undefined ? 1 : this.multiplayerStrengthByTeam[airstrike.teamId],
+            );
             this.kills += result.kills;
             this.explosions.push(result.explosion);
             this.effects.spawnExplosion(result.explosion.x, result.explosion.y, result.explosion.radius, true);
@@ -891,7 +909,7 @@ export class GameScene extends Phaser.Scene {
                 const wasOff = generator.level === 0;
                 generator.level = Math.min(MAX_MONSTER_GENERATOR_LEVEL, generator.level + 1);
                 if (wasOff) {
-                    this.spawnMultiplayerEnemy(generator);
+                    generator.progress = this.multiplayerStrengthByTeam[command.teamId];
                 }
                 this.renderMonsterGeneratorControls();
             }
@@ -1021,6 +1039,7 @@ export class GameScene extends Phaser.Scene {
     private createMultiplayerChecksum(): string {
         const state = {
             tick: this.multiplayerTick,
+            strength: this.multiplayerStrengthByTeam,
             health: this.baseHealthByTeam,
             towers: this.towers.map((tower) => ({
                 id: tower.id,
@@ -1221,7 +1240,10 @@ export class GameScene extends Phaser.Scene {
             if (generator.level <= 0) {
                 continue;
             }
-            const periodMs = getGeneratorSpawnPeriodMs(generator.track, generator.level);
+            const periodMs = getStrengthAdjustedSpawnPeriodMs(
+                getGeneratorSpawnPeriodMs(generator.track, generator.level),
+                this.multiplayerStrengthByTeam[generator.teamId],
+            );
             generator.progress += deltaMs / periodMs;
             while (generator.progress >= 1) {
                 generator.progress -= 1;
@@ -2567,6 +2589,15 @@ export class GameScene extends Phaser.Scene {
                     this.generators.find((generator) => generator.teamId === teamId && generator.track === track)?.level ?? 0,
                 ])),
             ])),
+            getMultiplayerStrengths: () => ({ ...this.multiplayerStrengthByTeam }),
+            getGeneratorSpawnPeriodForTeam: (teamId: TeamId, track: MonsterGeneratorTrack) => {
+                const generator = this.generators.find((candidate) => candidate.teamId === teamId && candidate.track === track);
+                if (!generator || generator.level <= 0) return Number.POSITIVE_INFINITY;
+                return getStrengthAdjustedSpawnPeriodMs(
+                    getGeneratorSpawnPeriodMs(track, generator.level),
+                    this.multiplayerStrengthByTeam[teamId],
+                );
+            },
             getMultiplayerResyncCount: () => this.multiplayerResyncCount,
             isComputerOpponent: () => multiplayerSession.isComputerOpponent,
             getTerrainTextureKeys: () => this.terrainSprites.map((sprite) => sprite.texture.key),

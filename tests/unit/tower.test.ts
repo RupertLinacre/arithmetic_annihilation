@@ -43,6 +43,29 @@ describe('tower target selection', () => {
         expect(result.projectiles.every((projectile) => projectile.teamId === 'solar')).toBe(true);
     });
 
+    it('scales every multiplayer projectile volley by the firing player strength', () => {
+        const grid = new Grid(8, 3, 'grass');
+        const flow = buildFlowField(grid, { x: 7, y: 1 }, createEmptyCostGrid(grid));
+        const center = cellCenter({ x: 3, y: 1 }, GAME_CONFIG.map);
+
+        for (const type of ['easy', 'spray', 'missile', 'cluster'] as const) {
+            const fullTower = createTower(1, 1, 1, type, 'solar');
+            const reducedTower = createTower(2, 1, 1, type, 'solar');
+            const fullTarget = createEnemy(1, 'tank', center.x, center.y, 10, 'lunar');
+            const reducedTarget = createEnemy(2, 'tank', center.x, center.y, 10, 'lunar');
+            const full = new TowerSystem().update(0, [fullTower], [fullTarget], grid, GAME_CONFIG.map, flow, () => 1);
+            const reduced = new TowerSystem().update(0, [reducedTower], [reducedTarget], grid, GAME_CONFIG.map, flow, () => 0.1);
+
+            expect(reduced.projectiles, type).toHaveLength(full.projectiles.length);
+            for (let index = 0; index < full.projectiles.length; index += 1) {
+                expect(reduced.projectiles[index].damage, `${type} projectile ${index}`).toBeCloseTo(full.projectiles[index].damage * 0.1);
+                if (full.projectiles[index].fragmentDamage !== undefined) {
+                    expect(reduced.projectiles[index].fragmentDamage, `${type} fragments`).toBeCloseTo(full.projectiles[index].fragmentDamage! * 0.1);
+                }
+            }
+        }
+    });
+
     it('calculates total theoretical tower damage per second from full volleys', () => {
         const easy: TowerState = { id: 1, gridX: 1, gridY: 1, type: 'easy', level: 1, cooldownMs: 0 };
         const spray: TowerState = { id: 2, gridX: 2, gridY: 1, type: 'spray', level: 1, cooldownMs: 0 };
@@ -143,6 +166,35 @@ describe('tower target selection', () => {
 
         new TowerSystem().update(300, [], [target, nearby], grid, GAME_CONFIG.map, flow);
         expect(nearby.burnMs).toBeGreaterThan(0);
+    });
+
+    it('scales multiplayer flamethrower and airstrike damage by player strength', () => {
+        const grid = new Grid(8, 4, 'grass');
+        const flow = buildFlowField(grid, { x: 7, y: 1 }, createEmptyCostGrid(grid));
+        const center = cellCenter({ x: 2, y: 1 }, GAME_CONFIG.map);
+        const fullFlameTarget = createEnemy(1, 'tank', center.x + 80, center.y, 10, 'lunar');
+        const reducedFlameTarget = createEnemy(2, 'tank', center.x + 80, center.y, 10, 'lunar');
+        const fullFlameTower = createTower(1, 2, 1, 'flamethrower', 'solar');
+        const reducedFlameTower = createTower(1, 2, 1, 'flamethrower', 'solar');
+        fullFlameTower.flameAngleRadians = 0;
+        reducedFlameTower.flameAngleRadians = 0;
+
+        new TowerSystem().update(100, [fullFlameTower], [fullFlameTarget], grid, GAME_CONFIG.map, flow, () => 1);
+        new TowerSystem().update(100, [reducedFlameTower], [reducedFlameTarget], grid, GAME_CONFIG.map, flow, () => 0.1);
+        const fullFlameDamage = fullFlameTarget.maxHealth - fullFlameTarget.health;
+        const reducedFlameDamage = reducedFlameTarget.maxHealth - reducedFlameTarget.health;
+        expect(reducedFlameDamage).toBeCloseTo(fullFlameDamage * 0.1);
+        expect(reducedFlameTarget.burnDamagePerSecond!).toBeCloseTo(fullFlameTarget.burnDamagePerSecond! * 0.1);
+
+        const airstrikeTarget = { x: 4, y: 2 };
+        const airstrikeCenter = cellCenter(airstrikeTarget, GAME_CONFIG.map);
+        const fullAirstrikeTarget = createEnemy(3, 'tank', airstrikeCenter.x, airstrikeCenter.y, 10, 'lunar');
+        const reducedAirstrikeTarget = createEnemy(4, 'tank', airstrikeCenter.x, airstrikeCenter.y, 10, 'lunar');
+        new TowerSystem().detonateAirstrike(airstrikeTarget, [fullAirstrikeTarget], grid, GAME_CONFIG.map, 'solar', 1);
+        new TowerSystem().detonateAirstrike(airstrikeTarget, [reducedAirstrikeTarget], grid, GAME_CONFIG.map, 'solar', 0.1);
+        expect(fullAirstrikeTarget.health).toBeLessThanOrEqual(0);
+        expect(reducedAirstrikeTarget.health).toBeGreaterThan(0);
+        expect(reducedAirstrikeTarget.maxHealth - reducedAirstrikeTarget.health).toBeCloseTo(reducedAirstrikeTarget.maxHealth * 0.2);
     });
 
     it('creates non-upgradable utility options with no combat DPS', () => {

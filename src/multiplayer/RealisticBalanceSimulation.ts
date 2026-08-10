@@ -21,6 +21,7 @@ import type {
     TowerType,
 } from '../types';
 import { getMultiplayerTowerQuestionValue, MULTIPLAYER_BASE_HEALTH } from './BalanceConfig';
+import { getStrengthAdjustedSpawnPeriodMs, normalizePlayerStrength } from './PlayerStrength';
 import {
     chooseMonsterType,
     getGeneratorDamageScale,
@@ -42,6 +43,7 @@ export interface RealisticSelfPlayStrategy {
     newTowerShare: number;
     answerSeconds: number;
     weaponWeights: Partial<Record<CombatTowerType, number>>;
+    strength?: number;
 }
 
 export interface RealisticSelfPlayResult {
@@ -183,12 +185,12 @@ function addGeneratorUpgrade(
     player: SimPlayer,
     track: MonsterGeneratorTrack,
     generators: MonsterGeneratorState[],
-    spawnEnemy: (generator: MonsterGeneratorState) => void,
+    strength: number,
 ): 1 | 2 {
     const generator = generators.find((candidate) => candidate.teamId === player.teamId && candidate.track === track)!;
     const wasOff = generator.level === 0;
     generator.level += 1;
-    if (wasOff) spawnEnemy(generator);
+    if (wasOff) generator.progress = normalizePlayerStrength(strength);
     const value = getGeneratorQuestionValue(track);
     player.offensePoints += value;
     player.questionPoints += value;
@@ -281,7 +283,7 @@ export function simulateRealisticSelfPlay(
                 }
                 const offense = canInvestInOffense && (!canInvestInDefense || shouldInvestInOffense(player, strategy, rng));
                 const value = offense
-                    ? addGeneratorUpgrade(player, chooseOffenseTrack(strategy, rng), generators, spawnEnemy)
+                    ? addGeneratorUpgrade(player, chooseOffenseTrack(strategy, rng), generators, strategy.strength ?? 1)
                     : addTowerInvestment(player, strategy, rng, map, towers, flows.flow[player.teamId], () => nextTowerIdValue++);
                 flowsDirty ||= !offense;
                 const difficultyMultiplier = value === 2 ? 1.45 : 1;
@@ -292,7 +294,10 @@ export function simulateRealisticSelfPlay(
 
         for (const generator of generators) {
             if (generator.level <= 0) continue;
-            generator.progress += STEP_MS / getGeneratorSpawnPeriodMs(generator.track, generator.level);
+            generator.progress += STEP_MS / getStrengthAdjustedSpawnPeriodMs(
+                getGeneratorSpawnPeriodMs(generator.track, generator.level),
+                strategies[generator.teamId].strength ?? 1,
+            );
             while (generator.progress >= 1) {
                 generator.progress -= 1;
                 spawnEnemy(generator);
@@ -332,7 +337,15 @@ export function simulateRealisticSelfPlay(
             teamId,
             enemies.filter((enemy) => enemy.teamId === teamId).reduce((sum, enemy) => sum + Math.max(0, enemy.health), 0),
         ])) as Record<TeamId, number>;
-        const towerResult = towerSystem.update(STEP_MS, towers, enemies, map.grid, GAME_CONFIG.map, (tower) => flows.flow[tower.teamId!]);
+        const towerResult = towerSystem.update(
+            STEP_MS,
+            towers,
+            enemies,
+            map.grid,
+            GAME_CONFIG.map,
+            (tower) => flows.flow[tower.teamId!],
+            (teamId) => strategies[teamId].strength ?? 1,
+        );
         projectiles.push(...towerResult.projectiles);
         projectiles = projectileSystem.update(STEP_MS, projectiles, enemies, map.grid, GAME_CONFIG.map).projectiles;
         const healthAfter = Object.fromEntries(TEAMS.map((teamId) => [

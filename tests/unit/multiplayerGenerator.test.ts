@@ -16,8 +16,22 @@ import {
     getWrongAnswerNibbleLevelIncrease,
     MAX_MONSTER_GENERATOR_LEVEL,
 } from '../../src/multiplayer/MonsterGenerator';
+import {
+    getStrengthAdjustedSpawnPeriodMs,
+    normalizePlayerStrength,
+} from '../../src/multiplayer/PlayerStrength';
 
 describe('multiplayer monster generator progression', () => {
+    it('slows generator cadence in direct proportion to player strength', () => {
+        const normalPeriod = getGeneratorSpawnPeriodMs('nibble', 4);
+        expect(getStrengthAdjustedSpawnPeriodMs(normalPeriod, 1)).toBe(normalPeriod);
+        expect(getStrengthAdjustedSpawnPeriodMs(normalPeriod, 0.5)).toBe(normalPeriod * 2);
+        expect(getStrengthAdjustedSpawnPeriodMs(normalPeriod, 0.1)).toBe(normalPeriod * 10);
+        expect(normalizePlayerStrength(0.04)).toBe(0.1);
+        expect(normalizePlayerStrength(1.8)).toBe(1);
+        expect(normalizePlayerStrength(Number.NaN)).toBe(1);
+    });
+
     it('keeps the base track Nibble-only and starts the advanced track at Zappers', () => {
         expect(getMonsterMix('nibble', 12).types).toEqual(['scout']);
         expect(getMonsterMix('advanced', 1).types).toEqual(['grunt']);
