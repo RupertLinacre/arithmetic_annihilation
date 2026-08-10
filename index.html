@@ -19,8 +19,8 @@
         gtag('js', new Date());
         gtag('config', 'G-94373ZKHEE');
     </script>
-  <script type="module" crossorigin src="/arithmetic_annihilation/assets/index-DjDbLcLX.js"></script>
-  <link rel="stylesheet" crossorigin href="/arithmetic_annihilation/assets/index-COVN_Anx.css">
+  <script type="module" crossorigin src="/arithmetic_annihilation/assets/index-DL039AtY.js"></script>
+  <link rel="stylesheet" crossorigin href="/arithmetic_annihilation/assets/index-DEsBqutI.css">
 </head>
 
 <body>
@@ -99,6 +99,33 @@
             </section>
             <div id="game-surface">
                 <div id="game-root" data-testid="game-root"></div>
+                <section class="mobile-battle-stats" hidden data-testid="mobile-battle-stats"
+                    aria-label="Battle statistics">
+                    <div class="mobile-team-stats is-local">
+                        <div class="mobile-team-stats-heading"><strong>You</strong><span><b data-mobile-stat="local-health">150</b> health</span></div>
+                        <span class="mobile-health-meter" role="meter" aria-label="Your base health" aria-valuemin="0"
+                            aria-valuemax="150" aria-valuenow="150" data-mobile-stat="local-health-meter">
+                            <span data-mobile-stat="local-health-fill"></span>
+                        </span>
+                        <div class="mobile-team-points">
+                            <span>Questions <b data-mobile-stat="local-questions">0</b></span>
+                            <span>Defence <b data-mobile-stat="local-defence">0</b></span>
+                            <span>Attack <b data-mobile-stat="local-attack">0</b></span>
+                        </div>
+                    </div>
+                    <div class="mobile-team-stats is-rival">
+                        <div class="mobile-team-stats-heading"><strong>Rival</strong><span><b data-mobile-stat="rival-health">150</b> health</span></div>
+                        <span class="mobile-health-meter" role="meter" aria-label="Rival base health" aria-valuemin="0"
+                            aria-valuemax="150" aria-valuenow="150" data-mobile-stat="rival-health-meter">
+                            <span data-mobile-stat="rival-health-fill"></span>
+                        </span>
+                        <div class="mobile-team-points">
+                            <span>Questions <b data-mobile-stat="rival-questions">0</b></span>
+                            <span>Defence <b data-mobile-stat="rival-defence">0</b></span>
+                            <span>Attack <b data-mobile-stat="rival-attack">0</b></span>
+                        </div>
+                    </div>
+                </section>
                 <section id="game-over" class="game-over" hidden data-testid="game-over">
                     <div>
                         <p data-game-over-message>Base destroyed</p>
@@ -115,17 +142,22 @@
                 </section>
             </div>
             <div id="topbar-controls" aria-label="Game controls">
-                <button id="music-mute-button" class="icon-button music-mute-button" type="button"
-                    aria-label="Mute music" aria-pressed="false" data-testid="music-mute-button">🔊</button>
-                <input id="music-volume-slider" class="music-volume-slider" type="range" min="0" max="100" step="1"
-                    value="10" aria-label="Music volume" data-testid="music-volume-slider" />
                 <button id="settings-button" class="icon-button settings-button" type="button" aria-label="Settings"
                     aria-expanded="false" aria-controls="settings-popup" data-testid="settings-button">⚙</button>
             </div>
             <section id="settings-popup" class="settings-popup" hidden aria-label="Settings"
                 data-testid="settings-popup">
                 <h2>Settings</h2>
-                <label class="settings-field" for="spawn-rate-select">
+                <div class="settings-field settings-volume-field">
+                    <span>Music volume</span>
+                    <div class="settings-volume-controls">
+                        <button id="music-mute-button" class="icon-button music-mute-button" type="button"
+                            aria-label="Mute music" aria-pressed="false" data-testid="music-mute-button">🔊</button>
+                        <input id="music-volume-slider" class="music-volume-slider" type="range" min="0" max="100" step="1"
+                            value="10" aria-label="Music volume" data-testid="music-volume-slider" />
+                    </div>
+                </div>
+                <label class="settings-field settings-spawn-rate-field" for="spawn-rate-select">
                     <span>Spawn rate</span>
                     <select id="spawn-rate-select" class="settings-select" data-testid="spawn-rate-select">
                         <option value="veryEasy">Very low</option>
