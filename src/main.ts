@@ -6,6 +6,7 @@ import { isMobileLayout } from './ui/mobile';
 import { INVITE_CODE_LENGTH, multiplayerSession } from './multiplayer/MultiplayerSession';
 import { normalizePlayerStrength } from './multiplayer/PlayerStrength';
 import type { BaseMathsDifficulty } from './systems/MathsQuestionSystem';
+import { enterMobileBrowserFullscreen, setupFullscreenControl } from './ui/fullscreen';
 
 const baseUrl = import.meta.env.BASE_URL;
 
@@ -50,6 +51,7 @@ function registerServiceWorker(): void {
 linkManifest();
 registerServiceWorker();
 document.documentElement.classList.toggle('is-mobile', isMobileLayout());
+setupFullscreenControl();
 
 const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
@@ -167,6 +169,7 @@ function setupModeScreen(): void {
     };
 
     document.querySelector<HTMLButtonElement>('[data-testid="single-player-button"]')!.addEventListener('click', () => {
+        enterMobileBrowserFullscreen();
         multiplayerSession.useSinglePlayer();
         startGame();
     });
@@ -179,6 +182,7 @@ function setupModeScreen(): void {
         actions.hidden = false;
     });
     document.querySelector<HTMLButtonElement>('[data-testid="create-match-button"]')!.addEventListener('click', () => {
+        enterMobileBrowserFullscreen();
         saveProfile();
         const code = multiplayerSession.createMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
         inviteCode.textContent = code;
@@ -186,6 +190,7 @@ function setupModeScreen(): void {
         renderPlayers();
     });
     document.querySelector<HTMLButtonElement>('[data-testid="computer-match-button"]')!.addEventListener('click', () => {
+        enterMobileBrowserFullscreen();
         saveProfile();
         multiplayerSession.startComputerMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
     });
@@ -197,6 +202,7 @@ function setupModeScreen(): void {
             return;
         }
         codeInput.setCustomValidity('');
+        enterMobileBrowserFullscreen();
         saveProfile();
         inviteCode.textContent = code;
         multiplayerSession.joinMatch(code, nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
@@ -207,7 +213,10 @@ function setupModeScreen(): void {
         codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
         codeInput.setCustomValidity('');
     });
-    startButton.addEventListener('click', () => multiplayerSession.startMatch());
+    startButton.addEventListener('click', () => {
+        enterMobileBrowserFullscreen();
+        multiplayerSession.startMatch();
+    });
     copyButton.addEventListener('click', async () => {
         await copyText(multiplayerSession.inviteCode);
         status.textContent = 'Invite code copied.';

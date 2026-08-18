@@ -800,6 +800,34 @@ body {
   width: auto;
 }
 
+.settings-fullscreen-button {
+  min-height: 36px;
+  border: 1px solid rgba(247, 240, 214, 0.3);
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: var(--ink);
+  background: rgba(247, 240, 214, 0.08);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-fullscreen-button:hover,
+.settings-fullscreen-button:focus-visible {
+  border-color: var(--amber);
+  background: rgba(243, 182, 75, 0.14);
+}
+
+.settings-fullscreen-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.settings-help {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .settings-leave-button {
   width: 100%;
   margin-top: 16px;

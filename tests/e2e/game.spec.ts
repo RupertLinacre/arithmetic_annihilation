@@ -337,6 +337,38 @@ test('a wall upgrades into a gate that opens when clicked', async ({ page }) => 
 test('mobile answer flow keeps choices and uses an in-game correction number pad', async ({ page }) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await page.addInitScript(() => {
+        let fullscreenElement: Element | null = null;
+        let requestCount = 0;
+        let exitCount = 0;
+        Object.defineProperty(Document.prototype, 'fullscreenElement', {
+            configurable: true,
+            get: () => fullscreenElement,
+        });
+        Object.defineProperty(Element.prototype, 'requestFullscreen', {
+            configurable: true,
+            value: function (this: Element) {
+                requestCount += 1;
+                fullscreenElement = this;
+                document.dispatchEvent(new Event('fullscreenchange'));
+                return Promise.resolve();
+            },
+        });
+        Object.defineProperty(Document.prototype, 'exitFullscreen', {
+            configurable: true,
+            value: () => {
+                exitCount += 1;
+                fullscreenElement = null;
+                document.dispatchEvent(new Event('fullscreenchange'));
+                return Promise.resolve();
+            },
+        });
+        Object.defineProperty(window, '__fullscreenCalls', {
+            configurable: true,
+            value: {
+                get requestCount() { return requestCount; },
+                get exitCount() { return exitCount; },
+            },
+        });
         Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: () => 1 });
         Object.defineProperty(window, 'ontouchstart', { configurable: true, value: null });
         const originalMatchMedia = window.matchMedia.bind(window);
@@ -377,6 +409,7 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
     await page.locator('[data-mode-back]').click();
 
     await startSinglePlayer(page);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls: { requestCount: number } }).__fullscreenCalls.requestCount)).toBe(1);
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     const mobileLayout = await page.evaluate(() => ({
         frameTop: document.querySelector('#game-frame')!.getBoundingClientRect().top,
@@ -418,6 +451,10 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
     await page.getByTestId('answer-popup-close').click();
     await page.getByTestId('settings-button').click();
     await expect(page.getByTestId('settings-popup')).toBeVisible();
+    await expect(page.getByTestId('fullscreen-button')).toHaveText('Exit fullscreen');
+    await page.getByTestId('fullscreen-button').click();
+    await expect(page.getByTestId('fullscreen-button')).toHaveText('Enter fullscreen');
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __fullscreenCalls: { exitCount: number } }).__fullscreenCalls.exitCount)).toBe(1);
     await page.getByTestId('answer-mode-select').selectOption('type-answer');
     await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('type-answer');
     await page.getByTestId('settings-button').click();
@@ -430,6 +467,28 @@ test('mobile answer flow keeps choices and uses an in-game correction number pad
     await enterNumberPadAnswer(page, typedAnswer!);
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(1);
     await expect(page.locator('[data-testid="answer-number-key"][data-key="submit"]')).toHaveCount(0);
+});
+
+test('fullscreen control degrades gracefully when the API is unavailable', async ({ page }) => {
+    await page.addInitScript(() => {
+        Object.defineProperty(Element.prototype, 'requestFullscreen', {
+            configurable: true,
+            value: undefined,
+        });
+        Object.defineProperty(Document.prototype, 'exitFullscreen', {
+            configurable: true,
+            value: undefined,
+        });
+    });
+
+    await page.goto('/?seed=no-fullscreen');
+    await startSinglePlayer(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+    await page.getByTestId('settings-button').click();
+    await expect(page.getByTestId('settings-popup')).toBeVisible();
+    await expect(page.getByTestId('fullscreen-button')).toBeDisabled();
+    await expect(page.getByTestId('fullscreen-button')).toHaveText('Fullscreen unavailable');
+    await expect(page.locator('[data-fullscreen-status]')).toBeVisible();
 });
 
 test('versus computer starts a local multiplayer battle with opponent visuals', async ({ page }) => {
