@@ -800,6 +800,20 @@ body {
   width: auto;
 }
 
+.settings-leave-button {
+  width: 100%;
+  margin-top: 16px;
+  border-color: rgba(232, 93, 117, 0.55);
+  color: #ffd9df;
+  background: rgba(232, 93, 117, 0.12);
+}
+
+.settings-leave-button:hover,
+.settings-leave-button:focus-visible {
+  border-color: rgba(232, 93, 117, 0.9);
+  background: rgba(232, 93, 117, 0.22);
+}
+
 #game-status-message[data-state="connection-lost"] {
   border-color: rgba(232, 93, 117, 0.72);
   background: rgba(232, 93, 117, 0.16);
@@ -809,6 +823,83 @@ body {
 
 .mobile-battle-stats {
   display: none;
+}
+
+html:not(.is-mobile).is-multiplayer .mobile-battle-stats:not([hidden]) {
+  position: absolute;
+  z-index: 4;
+  right: 0;
+  /* The map ends at (originY + rows × cellSize) / canvasHeight = 606 / 800. */
+  top: 75.75%;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 18px;
+  border-top: 1px solid var(--line);
+  background: rgba(12, 18, 16, 0.96);
+  font-size: 11px;
+}
+
+html:not(.is-mobile) .mobile-team-stats {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid rgba(247, 240, 214, 0.16);
+  border-radius: 7px;
+  background: rgba(247, 240, 214, 0.04);
+}
+
+html:not(.is-mobile) .mobile-team-stats-heading,
+html:not(.is-mobile) .mobile-team-points {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+html:not(.is-mobile) .mobile-team-stats-heading span,
+html:not(.is-mobile) .mobile-team-points span {
+  color: var(--muted);
+}
+
+html:not(.is-mobile) .mobile-team-stats.is-local strong,
+html:not(.is-mobile) .mobile-team-stats.is-local b {
+  color: #a9d4ff;
+}
+
+html:not(.is-mobile) .mobile-team-stats.is-rival strong,
+html:not(.is-mobile) .mobile-team-stats.is-rival b {
+  color: #ffacb9;
+}
+
+html:not(.is-mobile) .mobile-health-meter {
+  display: block;
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+html:not(.is-mobile) .mobile-health-meter > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transition: transform 140ms ease-out;
+}
+
+html:not(.is-mobile) .is-local .mobile-health-meter > span {
+  background: #5ca5ff;
+}
+
+html:not(.is-mobile) .is-rival .mobile-health-meter > span {
+  background: #e85d75;
 }
 
 .settings-field span {
@@ -1544,6 +1635,8 @@ html.is-mobile #hud {
   flex: 1 1 auto;
   min-width: 0;
   padding: 7px 8px;
+  border-color: rgba(247, 240, 214, 0.14);
+  border-radius: 12px;
   font-size: 12px;
   line-height: 32px;
 }

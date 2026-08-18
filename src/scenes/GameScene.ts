@@ -1548,6 +1548,7 @@ export class GameScene extends Phaser.Scene {
         const spawnRateSelect = document.querySelector<HTMLSelectElement>('[data-testid="spawn-rate-select"]')!;
         const baseDifficultySelect = document.querySelector<HTMLSelectElement>('[data-testid="base-difficulty-select"]')!;
         const answerModeSelect = document.querySelector<HTMLSelectElement>('[data-testid="answer-mode-select"]')!;
+        const leaveGameButton = document.querySelector<HTMLButtonElement>('[data-testid="leave-game-button"]')!;
         this.mobileLayout?.attachSettingsPopup(popup);
         const setPopupOpen = (open: boolean) => {
             if (this.mobileLayout) {
@@ -1594,6 +1595,11 @@ export class GameScene extends Phaser.Scene {
             if (isMobileAnswerMode(value) && value !== this.mobileAnswerMode) {
                 this.setMobileAnswerMode(value);
             }
+        });
+        leaveGameButton.addEventListener('click', () => {
+            multiplayerSession.close();
+            window.sessionStorage.removeItem('arithmetic-annihilation:resume-single');
+            window.location.assign(import.meta.env.BASE_URL);
         });
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
@@ -1952,7 +1958,7 @@ export class GameScene extends Phaser.Scene {
         this.debugGraphics.clear();
         this.renderMap();
         this.renderBaseDamageFlash();
-        this.renderMobileBaseHealthBars();
+        this.renderBaseHealthBars();
         this.renderDebugLosBlocks();
         this.renderTowerRanges();
         this.renderFlowDebug();
@@ -1967,8 +1973,8 @@ export class GameScene extends Phaser.Scene {
         this.renderCostDebug();
     }
 
-    private renderMobileBaseHealthBars(): void {
-        if (!this.isMultiplayer || !this.mobileLayout) return;
+    private renderBaseHealthBars(): void {
+        if (!this.isMultiplayer) return;
 
         const { cellSize } = GAME_CONFIG.map;
         const barWidth = cellSize * 2.35;

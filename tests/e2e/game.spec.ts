@@ -286,6 +286,12 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect(page.getByTestId('game-over')).toBeHidden();
     await expect(page.locator('[data-stat="health"]')).toHaveText('100');
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getBaseHealth())).toBe(100);
+    await page.getByTestId('settings-button').click();
+    await expect(page.getByTestId('leave-game-button')).toBeVisible();
+    await page.getByTestId('leave-game-button').click();
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.getByTestId('mode-screen')).toBeVisible();
+    await expect(page.locator('#game-frame')).toBeHidden();
     expect(errors).toEqual([]);
 });
 
@@ -407,6 +413,17 @@ test('versus computer starts a local multiplayer battle with opponent visuals', 
     await expect(page.locator('canvas')).toBeVisible();
     await expect(page.locator('[data-stat="health"]')).toHaveText('150');
     await expect(page.locator('[data-stat="base-meter"]')).toHaveAttribute('aria-valuemax', '150');
+    await expect(page.getByTestId('mobile-battle-stats')).toBeVisible();
+    await expect(page.locator('[data-mobile-stat="local-health-meter"]')).toHaveAttribute('aria-valuemax', '150');
+    const desktopStatsPlacement = await page.evaluate(() => {
+        const canvas = document.querySelector('canvas')!;
+        const stats = document.querySelector('[data-testid="mobile-battle-stats"]')!;
+        const canvasBounds = canvas.getBoundingClientRect();
+        const statsBounds = stats.getBoundingClientRect();
+        const expectedMapBottom = canvasBounds.top + canvasBounds.height * (606 / 800);
+        return { statsTop: statsBounds.top, expectedMapBottom };
+    });
+    expect(Math.abs(desktopStatsPlacement.statsTop - desktopStatsPlacement.expectedMapBottom)).toBeLessThan(2);
     await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.isComputerOpponent())).toBe(true);
     expect(await page.evaluate(() => window.arithmeticAnnihilation!.getMultiplayerStrengths())).toEqual({ solar: 0.1, lunar: 1 });
