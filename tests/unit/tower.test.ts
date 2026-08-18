@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG, TOWER_STATS } from '../../src/config/gameConfig';
 import { createEnemy } from '../../src/entities/Enemy';
-import { calculateTotalTowerDamagePerSecond, calculateTowerDamagePerSecond, canUpgradeTower, createTower, selectTowerTarget } from '../../src/entities/Tower';
+import { calculateTotalTowerDamagePerSecond, calculateTowerDamagePerSecond, canUpgradeTower, createTower, selectTowerTarget, upgradeTower } from '../../src/entities/Tower';
 import { cellCenter, Grid } from '../../src/map/Grid';
 import { buildFlowField } from '../../src/pathfinding/FlowField';
 import { createEmptyCostGrid, getTowerStats } from '../../src/pathfinding/ThreatMap';
@@ -197,12 +197,17 @@ describe('tower target selection', () => {
         expect(reducedAirstrikeTarget.maxHealth - reducedAirstrikeTarget.health).toBeCloseTo(reducedAirstrikeTarget.maxHealth * 0.2);
     });
 
-    it('creates non-upgradable utility options with no combat DPS', () => {
+    it('upgrades a wall once into a gate while utility options have no combat DPS', () => {
         const wall = createTower(1, 1, 1, 'wall');
         const airstrike = createTower(2, 2, 1, 'airstrike');
 
         expect(wall.health).toBe(GAME_CONFIG.wall.health);
         expect(wall.maxHealth).toBe(GAME_CONFIG.wall.health);
+        expect(canUpgradeTower(wall)).toBe(true);
+        expect(upgradeTower(wall)).toBe(true);
+        expect(wall.level).toBe(2);
+        expect(wall.gateOpen).toBe(false);
+        expect(wall.gateDirection).toBe('out');
         expect(canUpgradeTower(wall)).toBe(false);
         expect(calculateTowerDamagePerSecond(wall)).toBe(0);
         expect(canUpgradeTower(airstrike)).toBe(false);

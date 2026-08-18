@@ -2,6 +2,8 @@ export type TerrainType = 'tree' | 'grass' | 'tarmac';
 
 export type TeamId = 'solar' | 'lunar';
 
+export type GateDirection = 'in' | 'out';
+
 export type MonsterGeneratorType = 'scout' | 'grunt' | 'tank' | 'titan';
 
 export type MonsterGeneratorTrack = 'nibble' | 'advanced';
@@ -42,6 +44,8 @@ export interface TowerState {
     baseTerrain?: TerrainType;
     flameAngleRadians?: number;
     teamId?: TeamId;
+    gateOpen?: boolean;
+    gateDirection?: GateDirection;
 }
 
 export interface EnemyState {
@@ -70,6 +74,7 @@ export interface EnemyState {
     teamId?: TeamId;
     visualTier?: 1 | 2 | 3 | 4;
     tiebreakerHealthMultiplier?: number;
+    pennedByGateId?: number;
 }
 
 export interface ProjectileState {
@@ -159,6 +164,9 @@ export interface MultiplayerSnapshot {
 export type MultiplayerCommand =
     | { kind: 'build'; teamId: TeamId; cell: GridPoint; towerType: TowerType }
     | { kind: 'upgrade'; teamId: TeamId; towerId: number }
+    | { kind: 'deleteWall'; teamId: TeamId; towerId: number }
+    | { kind: 'toggleGate'; teamId: TeamId; towerId: number }
+    | { kind: 'setGateDirection'; teamId: TeamId; towerId: number; direction: GateDirection }
     | { kind: 'upgradeGenerator'; teamId: TeamId; track: MonsterGeneratorTrack }
     | { kind: 'answer'; teamId: TeamId; correct: boolean; value: 1 | 2 };
 

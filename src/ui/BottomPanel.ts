@@ -1,8 +1,8 @@
 import { DIFFICULTY_LABELS, TOWER_BUILD_DIFFICULTIES, TOWER_LABELS } from '../config/gameConfig';
-import { canUpgradeTower, getMultiplayerUpgradeQuestionDifficulty, getUpgradeQuestionDifficulty } from '../entities/Tower';
+import { canUpgradeTower, getGateDirection, getMultiplayerUpgradeQuestionDifficulty, getUpgradeQuestionDifficulty, isOpenGate } from '../entities/Tower';
 import { getTowerStats } from '../pathfinding/ThreatMap';
 import { MathsQuestionSystem } from '../systems/MathsQuestionSystem';
-import type { GridPoint, MathsQuestion, TowerDifficulty, TowerState, TowerType, Vec2 } from '../types';
+import type { GateDirection, GridPoint, MathsQuestion, TowerDifficulty, TowerState, TowerType, Vec2 } from '../types';
 import { getMultiplayerTowerQuestionDifficulty } from '../multiplayer/BalanceConfig';
 
 const BUILD_TOWER_TYPES: TowerType[] = ['easy', 'spray', 'missile', 'flamethrower', 'cluster', 'wall', 'airstrike'];
@@ -41,6 +41,9 @@ export type BuildTowerSelection = TowerType;
 interface BottomPanelCallbacks {
     onBuild: (cell: GridPoint, towerType: TowerType) => void;
     onUpgrade: (tower: TowerState) => void;
+    onDeleteWall: (tower: TowerState) => void;
+    onToggleGate: (tower: TowerState) => void;
+    onSetGateDirection: (tower: TowerState, direction: GateDirection) => void;
     onAnswered: (correct: boolean, difficulty: TowerDifficulty) => void;
     onQuestionStateChange: (isActive: boolean) => void;
     onClose: () => void;
@@ -144,6 +147,67 @@ export class BottomPanel {
         }
         this.popupAnchor = anchor;
         this.showQuestion({ kind: 'custom', difficulty, onSuccess });
+    }
+
+    openGateControls(tower: TowerState, anchor: Vec2): void {
+        if (this.correctionRequired) return;
+        this.clearPendingClose();
+        this.popupAnchor = anchor;
+        this.setQuestionActive(false);
+        this.hideBuildMenu();
+
+        const header = this.createDiv('build-popup-header');
+        const heading = this.createDiv('build-popup-head');
+        heading.append(this.createParagraph('panel-kicker build-popup-kicker', 'Gate controls'));
+        const title = document.createElement('h2');
+        title.textContent = `Gate · ${isOpenGate(tower) ? 'OPEN' : 'SHUT'} · ${getGateDirection(tower).toUpperCase()}`;
+        heading.append(title);
+        const closeButton = this.createButton('icon-button build-popup-close', '×', 'gate-controls-close');
+        closeButton.setAttribute('aria-label', 'Close gate controls');
+        closeButton.addEventListener('click', () => this.close());
+        header.append(heading, closeButton);
+
+        const stateLabel = this.createParagraph('meta-line gate-control-label', 'Open or shut');
+        const stateActions = this.createDiv('build-popup-actions gate-control-actions');
+        const openButton = this.createButton('difficulty-button', 'Open', 'gate-open');
+        const shutButton = this.createButton('difficulty-button', 'Shut', 'gate-shut');
+        openButton.setAttribute('aria-pressed', `${isOpenGate(tower)}`);
+        shutButton.setAttribute('aria-pressed', `${!isOpenGate(tower)}`);
+        openButton.disabled = isOpenGate(tower);
+        shutButton.disabled = !isOpenGate(tower);
+        openButton.addEventListener('click', () => {
+            this.callbacks.onToggleGate(tower);
+            this.close(true);
+        });
+        shutButton.addEventListener('click', () => {
+            this.callbacks.onToggleGate(tower);
+            this.close(true);
+        });
+        stateActions.append(openButton, shutButton);
+
+        const directionLabel = this.createParagraph('meta-line gate-control-label', 'Monster direction');
+        const directionActions = this.createDiv('build-popup-actions gate-control-actions');
+        const inButton = this.createButton('difficulty-button', 'In', 'gate-direction-in');
+        const outButton = this.createButton('difficulty-button', 'Out', 'gate-direction-out');
+        const direction = getGateDirection(tower);
+        inButton.setAttribute('aria-pressed', `${direction === 'in'}`);
+        outButton.setAttribute('aria-pressed', `${direction === 'out'}`);
+        inButton.disabled = direction === 'in';
+        outButton.disabled = direction === 'out';
+        inButton.addEventListener('click', () => {
+            this.callbacks.onSetGateDirection(tower, 'in');
+            this.close(true);
+        });
+        outButton.addEventListener('click', () => {
+            this.callbacks.onSetGateDirection(tower, 'out');
+            this.close(true);
+        });
+        directionActions.append(inButton, outButton);
+
+        this.buildMenu.append(header, stateLabel, stateActions, directionLabel, directionActions);
+        this.buildMenu.hidden = false;
+        this.buildMenu.classList.add('is-open');
+        this.positionBuildMenu(anchor);
     }
 
     close(force = false): void {
@@ -270,6 +334,16 @@ export class BottomPanel {
             );
 
         this.buildMenu.append(header, questionText, answerControl);
+        if (this.pendingAction?.kind === 'upgrade' && this.pendingAction.tower.type === 'wall' && this.pendingAction.tower.level === 1) {
+            const tower = this.pendingAction.tower;
+            const deleteButton = this.createButton('difficulty-button wall-delete-button', 'Delete wall', 'delete-wall');
+            deleteButton.setAttribute('aria-label', 'Delete wall');
+            deleteButton.addEventListener('click', () => {
+                this.close(true);
+                this.callbacks.onDeleteWall(tower);
+            });
+            this.buildMenu.append(deleteButton);
+        }
         this.buildMenu.hidden = false;
         this.buildMenu.classList.add('is-answer-popup');
         this.buildMenu.classList.add('is-open');

@@ -5,6 +5,52 @@ import type { FlowField } from '../pathfinding/FlowField';
 import { sampleFlowDirection } from '../pathfinding/FlowField';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 
+export interface EnemySpatialIndex {
+    nearby(enemy: EnemyState): readonly EnemyState[];
+}
+
+export const MAX_SEPARATION_NEIGHBORS = 32;
+
+function isEnemySpatialIndex(value: readonly EnemyState[] | EnemySpatialIndex): value is EnemySpatialIndex {
+    return 'nearby' in value;
+}
+
+export function createEnemySpatialIndex(enemies: readonly EnemyState[], bucketSize = GAME_CONFIG.map.cellSize): EnemySpatialIndex {
+    const safeBucketSize = Math.max(1, bucketSize);
+    const buckets = new Map<string, EnemyState[]>();
+    const bucketCoordinate = (value: number) => Math.floor(value / safeBucketSize);
+    for (const enemy of enemies) {
+        const key = `${bucketCoordinate(enemy.x)},${bucketCoordinate(enemy.y)}`;
+        const bucket = buckets.get(key);
+        if (bucket) {
+            bucket.push(enemy);
+        } else {
+            buckets.set(key, [enemy]);
+        }
+    }
+    return {
+        nearby(enemy) {
+            const centerX = bucketCoordinate(enemy.x);
+            const centerY = bucketCoordinate(enemy.y);
+            const nearby: EnemyState[] = [];
+            const offsets = [
+                [0, 0],
+                [-1, 0], [1, 0], [0, -1], [0, 1],
+                [-1, -1], [1, -1], [-1, 1], [1, 1],
+            ] as const;
+            for (const [offsetX, offsetY] of offsets) {
+                const bucket = buckets.get(`${centerX + offsetX},${centerY + offsetY}`);
+                if (!bucket) continue;
+                for (const candidate of bucket) {
+                    nearby.push(candidate);
+                    if (nearby.length >= MAX_SEPARATION_NEIGHBORS) return nearby;
+                }
+            }
+            return nearby;
+        },
+    };
+}
+
 export function createEnemy(id: number, type: EnemyType, x: number, y: number, healthScale = 1, teamId?: TeamId): EnemyState {
     const stats = ENEMY_STATS[type];
     return {
@@ -78,7 +124,7 @@ function updateProgressTracking(enemy: EnemyState, dtSeconds: number, flowField:
     }
 }
 
-export function updateEnemy(enemy: EnemyState, dtSeconds: number, flowField: FlowField, emergencyFlowField: FlowField, grid: Grid, geometry: MapGeometry, enemies: readonly EnemyState[]): boolean {
+export function updateEnemy(enemy: EnemyState, dtSeconds: number, flowField: FlowField, emergencyFlowField: FlowField, grid: Grid, geometry: MapGeometry, enemyNeighbors: readonly EnemyState[] | EnemySpatialIndex, exactTarget = false): boolean {
     const activeFlowField = enemy.isStuck ? emergencyFlowField : flowField;
     const desired = sampleFlowDirection(activeFlowField, grid, { x: enemy.x, y: enemy.y }, geometry);
     const cell = worldToGrid({ x: enemy.x, y: enemy.y }, grid, geometry);
@@ -90,7 +136,8 @@ export function updateEnemy(enemy: EnemyState, dtSeconds: number, flowField: Flo
 
     let separationX = 0;
     let separationY = 0;
-    for (const other of enemies) {
+    const nearbyEnemies = isEnemySpatialIndex(enemyNeighbors) ? enemyNeighbors.nearby(enemy) : enemyNeighbors;
+    for (const other of nearbyEnemies) {
         if (other.id === enemy.id || other.health <= 0) {
             continue;
         }
@@ -121,5 +168,9 @@ export function updateEnemy(enemy: EnemyState, dtSeconds: number, flowField: Flo
     enemy.lastMoveSpeed = dtSeconds > 0 ? moveDistance / dtSeconds : 0;
 
     updateProgressTracking(enemy, dtSeconds, flowField, grid, geometry);
-    return newCell ? isBaseFootprintCell(flowField.base, newCell, grid) : false;
+    return newCell
+        ? exactTarget
+            ? newCell.x === flowField.base.x && newCell.y === flowField.base.y
+            : isBaseFootprintCell(flowField.base, newCell, grid)
+        : false;
 }

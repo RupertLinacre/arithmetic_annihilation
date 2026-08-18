@@ -1032,9 +1032,38 @@ html:not(.is-mobile) .is-rival .mobile-health-meter > span {
   text-align: center;
 }
 
+.gate-control-label {
+  margin-bottom: -6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.gate-control-actions .difficulty-button[aria-pressed="true"] {
+  border-color: var(--amber);
+  color: #101614;
+  background: var(--amber);
+  opacity: 1;
+}
+
 .answer-popup-actions .choice-button {
   min-width: 0;
   text-align: left;
+}
+
+.wall-delete-button {
+  width: 100%;
+  border-color: rgba(232, 93, 117, 0.65);
+  color: #ffd9df;
+  background: rgba(232, 93, 117, 0.14);
+}
+
+.wall-delete-button:hover,
+.wall-delete-button:focus-visible {
+  border-color: rgba(232, 93, 117, 0.95);
+  background: rgba(232, 93, 117, 0.25);
 }
 
 .popup-definition {
