@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { ENEMY_STATS, GAME_CONFIG, TOWER_COLORS } from '../config/gameConfig';
 import { SeededRandom } from '../core/SeededRandom';
-import { canUpgradeTower, createTower, isWallTower, upgradeTower } from '../entities/Tower';
-import { createEnemy, updateEnemy } from '../entities/Enemy';
+import { canUpgradeTower, createTower, getGateDirection, isGateTower, isOpenGate, isWallTower, upgradeTower } from '../entities/Tower';
+import { createEnemy, createEnemySpatialIndex, updateEnemy } from '../entities/Enemy';
 import { isBaseFootprintCell } from '../map/BaseFootprint';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 import { hasLineOfSight } from '../map/LineOfSight';
@@ -28,7 +28,8 @@ import { EnemySpawner, isGameDifficulty, type GameDifficulty } from '../systems/
 import { EffectsSystem } from '../systems/EffectsSystem';
 import { ProjectileSystem } from '../systems/ProjectileSystem';
 import { TowerSystem, type AirstrikeImpactCell } from '../systems/TowerSystem';
-import { updateEnemyWallObjective } from '../systems/WallSystem';
+import { buildGateRoutingCache, updateEnemyGateObjective, type GateRoutingCache } from '../systems/GateSystem';
+import { buildWallRoutingCache, updateEnemyWallObjective, type WallRoutingCache } from '../systems/WallSystem';
 import {
     BASE_MATHS_DIFFICULTY_LABELS,
     normalizeBaseMathsDifficulty,
@@ -39,6 +40,7 @@ import { BottomPanel, type BuildTowerSelection, type MobileAnswerMode } from '..
 import { isMobileLayout, MobileLayout } from '../ui/mobile';
 import type {
     EnemyState,
+    GateDirection,
     GridPoint,
     MonsterGeneratorState,
     MonsterGeneratorTrack,
@@ -73,6 +75,8 @@ const SPRITE_PATHS = {
     towerClusterBomb: 'sprites/turrent_cluster_bomb.png',
     towerSidewinder: 'sprites/turret_sidewinder.png',
     wall: 'sprites/wall.png',
+    gateClosed: 'sprites/gate_closed.png',
+    gateOpen: 'sprites/gate_open.png',
     monster1Run: 'sprites/monster_1_run.png',
     monster1Stop: 'sprites/monster_1_stop.png',
     monster1Hurt: 'sprites/monster_1_hurt.png',
@@ -322,10 +326,12 @@ export class GameScene extends Phaser.Scene {
     private generatedMap!: GeneratedMap;
     private flowField!: FlowField;
     private emergencyFlowField!: FlowField;
+    private wallRoutingCache!: WallRoutingCache;
     private threatCosts!: CostGrid;
     private graphics!: Phaser.GameObjects.Graphics;
     private debugGraphics!: Phaser.GameObjects.Graphics;
     private towerSprites = new Map<number, Phaser.GameObjects.Image>();
+    private gateLabels = new Map<number, Phaser.GameObjects.Text>();
     private terrainSprites: Phaser.GameObjects.Image[] = [];
     private enemyShadows = new Map<number, Phaser.GameObjects.Image>();
     private enemySprites = new Map<number, Phaser.GameObjects.Image>();
@@ -375,6 +381,8 @@ export class GameScene extends Phaser.Scene {
     private multiplayerStrengthByTeam: Record<TeamId, number> = { solar: 1, lunar: 1 };
     private flowFields?: Record<TeamId, FlowField>;
     private emergencyFlowFields?: Record<TeamId, FlowField>;
+    private wallRoutingCaches?: Record<TeamId, WallRoutingCache>;
+    private gateRoutingCaches?: Record<TeamId, GateRoutingCache>;
     private threatCostsByTeam?: Record<TeamId, CostGrid>;
     private baseDamageFlashMs = 0;
     private spawnRate: GameDifficulty = 'medium';
@@ -457,6 +465,9 @@ export class GameScene extends Phaser.Scene {
         this.panel = new BottomPanel(this.mathsSystem, {
             onBuild: (cell, towerType) => this.requestCommand({ kind: 'build', teamId: this.localTeamId, cell, towerType }),
             onUpgrade: (tower) => this.requestCommand({ kind: 'upgrade', teamId: this.localTeamId, towerId: tower.id }),
+            onDeleteWall: (tower) => this.requestCommand({ kind: 'deleteWall', teamId: this.localTeamId, towerId: tower.id }),
+            onToggleGate: (tower) => this.requestCommand({ kind: 'toggleGate', teamId: this.localTeamId, towerId: tower.id }),
+            onSetGateDirection: (tower, direction) => this.requestCommand({ kind: 'setGateDirection', teamId: this.localTeamId, towerId: tower.id, direction }),
             onAnswered: (correct, difficulty) => this.recordAnswer(correct, difficulty),
             onQuestionStateChange: (isActive) => this.setQuestionPause(isActive),
             onClose: () => this.clearSelection(),
@@ -517,12 +528,14 @@ export class GameScene extends Phaser.Scene {
             this.connectionLostTimeoutId = undefined;
         }
         for (const sprite of this.towerSprites.values()) sprite.destroy();
+        for (const label of this.gateLabels.values()) label.destroy();
         for (const sprite of this.enemySprites.values()) sprite.destroy();
         for (const sprite of this.enemyShadows.values()) sprite.destroy();
         for (const sprite of this.terrainSprites) sprite.destroy();
         for (const sprite of this.baseSprites.values()) sprite.destroy();
         this.teamBackdropGraphics?.destroy();
         this.towerSprites.clear();
+        this.gateLabels.clear();
         this.enemySprites.clear();
         this.enemyShadows.clear();
         this.terrainSprites = [];
@@ -611,12 +624,20 @@ export class GameScene extends Phaser.Scene {
         const enemySurvivors: EnemyState[] = [];
         let baseDamageTaken = 0;
         let wallDestroyed = false;
+        const enemySpatialIndex = createEnemySpatialIndex(this.enemies);
         for (const enemy of this.enemies) {
             const targetTeam = this.isMultiplayer ? opponentOf(enemy.teamId ?? 'solar') : 'lunar';
             const flowField = this.isMultiplayer ? this.flowFields![targetTeam] : this.flowField;
             const emergencyFlowField = this.isMultiplayer ? this.emergencyFlowFields![targetTeam] : this.emergencyFlowField;
-            const threatCosts = this.isMultiplayer ? this.threatCostsByTeam![targetTeam] : this.threatCosts;
-            const wallAttack = updateEnemyWallObjective(enemy, deltaMs / 1000, this.towers, flowField, this.generatedMap.grid, GAME_CONFIG.map, this.enemies, threatCosts);
+            if (this.isMultiplayer && enemy.teamId !== undefined) {
+                const gateResult = updateEnemyGateObjective(enemy, deltaMs / 1000, this.gateRoutingCaches![enemy.teamId], this.generatedMap.grid, GAME_CONFIG.map, enemySpatialIndex);
+                if (gateResult.handled) {
+                    if (enemy.health > 0) enemySurvivors.push(enemy);
+                    continue;
+                }
+            }
+            const wallRoutingCache = this.isMultiplayer ? this.wallRoutingCaches![enemy.teamId ?? 'solar'] : this.wallRoutingCache;
+            const wallAttack = updateEnemyWallObjective(enemy, deltaMs / 1000, wallRoutingCache, flowField, this.generatedMap.grid, GAME_CONFIG.map, enemySpatialIndex);
             if (wallAttack.targetedWall) {
                 if (wallAttack.destroyedWall) {
                     this.destroyTower(wallAttack.destroyedWall);
@@ -627,7 +648,7 @@ export class GameScene extends Phaser.Scene {
                 }
                 continue;
             }
-            const reachedBase = updateEnemy(enemy, deltaMs / 1000, flowField, emergencyFlowField, this.generatedMap.grid, GAME_CONFIG.map, this.enemies);
+            const reachedBase = updateEnemy(enemy, deltaMs / 1000, flowField, emergencyFlowField, this.generatedMap.grid, GAME_CONFIG.map, enemySpatialIndex);
             if (reachedBase) {
                 if (this.isMultiplayer) {
                     const previousHealth = this.baseHealthByTeam[targetTeam];
@@ -725,6 +746,11 @@ export class GameScene extends Phaser.Scene {
         const wantsAirstrike = this.panel.getSelectedBuildTower() === 'airstrike';
         this.selectedCell = cell;
         this.selectedTower = tower;
+        if (tower && isGateTower(tower) && (!this.isMultiplayer || tower.teamId === this.localTeamId) && !wantsAirstrike) {
+            this.panel.openGateControls(tower, pointerPosition);
+            this.render();
+            return;
+        }
         if (tower && (!this.isMultiplayer || tower.teamId === this.localTeamId) && !wantsAirstrike) {
             this.panel.openUpgrade(tower, pointerPosition);
         } else if (wantsAirstrike || this.canBuildOnCell(cell)) {
@@ -864,6 +890,41 @@ export class GameScene extends Phaser.Scene {
         return false;
     }
 
+    private toggleGate(tower: TowerState, teamId = this.localTeamId): boolean {
+        if (!isGateTower(tower) || (this.isMultiplayer && tower.teamId !== teamId)) {
+            return false;
+        }
+        const opening = !isOpenGate(tower);
+        if (!opening) {
+            const occupied = this.enemies.some((enemy) => {
+                const cell = worldToGrid({ x: enemy.x, y: enemy.y }, this.generatedMap.grid, GAME_CONFIG.map);
+                return cell?.x === tower.gridX && cell.y === tower.gridY;
+            });
+            if (occupied) return false;
+        }
+        tower.gateOpen = opening;
+        this.generatedMap.grid.setTerrain(tower.gridX, tower.gridY, opening ? (tower.baseTerrain ?? 'grass') : 'tree');
+        this.rebuildFlowField();
+        return true;
+    }
+
+    private setGateDirection(tower: TowerState, direction: GateDirection, teamId = this.localTeamId): boolean {
+        if (!isGateTower(tower) || (this.isMultiplayer && tower.teamId !== teamId)) return false;
+        if (getGateDirection(tower) === direction) return false;
+        tower.gateDirection = direction;
+        this.rebuildFlowField();
+        return true;
+    }
+
+    private deleteWall(tower: TowerState, teamId = this.localTeamId): boolean {
+        if (tower.type !== 'wall' || tower.level !== 1 || (this.isMultiplayer && tower.teamId !== teamId)) {
+            return false;
+        }
+        this.destroyTower(tower);
+        this.rebuildFlowField();
+        return true;
+    }
+
     private destroyTower(tower: TowerState): void {
         const index = this.towers.findIndex((candidate) => candidate.id === tower.id);
         if (index === -1) {
@@ -903,6 +964,15 @@ export class GameScene extends Phaser.Scene {
             if (tower) {
                 this.upgradeExistingTower(tower);
             }
+        } else if (command.kind === 'deleteWall') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) this.deleteWall(tower);
+        } else if (command.kind === 'toggleGate') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) this.toggleGate(tower);
+        } else if (command.kind === 'setGateDirection') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) this.setGateDirection(tower, command.direction);
         }
     }
 
@@ -923,6 +993,21 @@ export class GameScene extends Phaser.Scene {
                     this.statsByTeam[command.teamId].defensePoints += getMultiplayerTowerQuestionValue(tower.type);
                 }
             }
+            return;
+        }
+        if (command.kind === 'deleteWall') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) this.deleteWall(tower, command.teamId);
+            return;
+        }
+        if (command.kind === 'toggleGate') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) this.toggleGate(tower, command.teamId);
+            return;
+        }
+        if (command.kind === 'setGateDirection') {
+            const tower = this.towers.find((candidate) => candidate.id === command.towerId);
+            if (tower) this.setGateDirection(tower, command.direction, command.teamId);
             return;
         }
         if (command.kind === 'upgradeGenerator') {
@@ -1074,6 +1159,8 @@ export class GameScene extends Phaser.Scene {
                 x: tower.gridX,
                 y: tower.gridY,
                 level: tower.level,
+                gateOpen: tower.gateOpen ?? false,
+                gateDirection: tower.gateDirection ?? 'out',
                 cooldownMs: stableNumber(tower.cooldownMs),
             })),
             enemies: this.enemies.map((enemy) => ({
@@ -1088,6 +1175,7 @@ export class GameScene extends Phaser.Scene {
                 maxHealth: stableNumber(enemy.maxHealth),
                 tiebreakerHealthMultiplier: stableNumber(enemy.tiebreakerHealthMultiplier ?? 1),
                 burnMs: stableNumber(enemy.burnMs ?? 0),
+                pennedByGateId: enemy.pennedByGateId ?? 0,
             })),
             projectiles: this.projectiles.map((projectile) => ({
                 id: projectile.id,
@@ -1291,9 +1379,7 @@ export class GameScene extends Phaser.Scene {
         const type = chooseMonsterType(generator.track, generator.level, this.multiplayerSpawnRng);
         const meta = MONSTER_CONFIG[type];
         const base = this.generatedMap.bases![generator.teamId];
-        const laneRows = [Math.floor(this.generatedMap.grid.rows * 0.3), Math.floor(this.generatedMap.grid.rows / 2), Math.floor(this.generatedMap.grid.rows * 0.72)];
-        const lane = this.multiplayerSpawnRng.choice(laneRows);
-        const center = cellCenter({ x: base.x, y: lane }, GAME_CONFIG.map);
+        const center = cellCenter(base, GAME_CONFIG.map);
         const jitter = GAME_CONFIG.map.cellSize * 0.12;
         const enemy = createEnemy(
             this.nextMultiplayerEnemyId++,
@@ -1393,7 +1479,7 @@ export class GameScene extends Phaser.Scene {
         this.baseHealthByTeam = { ...snapshot.baseHealth };
         this.towers = snapshot.towers.map((tower) => ({ ...tower }));
         for (const tower of this.towers) {
-            if (tower.type === 'wall') {
+            if (tower.type === 'wall' && !isOpenGate(tower)) {
                 this.generatedMap.grid.setTerrain(tower.gridX, tower.gridY, 'tree');
             }
         }
@@ -1460,6 +1546,14 @@ export class GameScene extends Phaser.Scene {
                 solar: buildFlowField(this.generatedMap.grid, this.generatedMap.bases.solar, createEmptyCostGrid(this.generatedMap.grid)),
                 lunar: buildFlowField(this.generatedMap.grid, this.generatedMap.bases.lunar, createEmptyCostGrid(this.generatedMap.grid)),
             };
+            this.wallRoutingCaches = {
+                solar: buildWallRoutingCache(this.towers, this.generatedMap.grid, this.threatCostsByTeam.lunar, 'solar'),
+                lunar: buildWallRoutingCache(this.towers, this.generatedMap.grid, this.threatCostsByTeam.solar, 'lunar'),
+            };
+            this.gateRoutingCaches = {
+                solar: buildGateRoutingCache(this.towers, this.generatedMap.grid, this.threatCostsByTeam.lunar, 'solar'),
+                lunar: buildGateRoutingCache(this.towers, this.generatedMap.grid, this.threatCostsByTeam.solar, 'lunar'),
+            };
             this.flowField = this.flowFields[this.localTeamId];
             this.emergencyFlowField = this.emergencyFlowFields[this.localTeamId];
             this.threatCosts = this.threatCostsByTeam[this.localTeamId];
@@ -1468,6 +1562,7 @@ export class GameScene extends Phaser.Scene {
         this.threatCosts = calculateTowerThreatCosts(this.generatedMap.grid, this.towers, GAME_CONFIG.map);
         this.flowField = buildFlowField(this.generatedMap.grid, this.generatedMap.base, this.threatCosts);
         this.emergencyFlowField = buildFlowField(this.generatedMap.grid, this.generatedMap.base, createEmptyCostGrid(this.generatedMap.grid));
+        this.wallRoutingCache = buildWallRoutingCache(this.towers, this.generatedMap.grid, this.threatCosts);
     }
 
     private findTowerAt(x: number, y: number): TowerState | undefined {
@@ -2109,6 +2204,27 @@ export class GameScene extends Phaser.Scene {
             this.setSpriteMaxSize(sprite, TOWER_SPRITE_MAX_SIZE);
             sprite.setAlpha(tower === this.selectedTower ? 1 : 0.96);
 
+            if (isGateTower(tower)) {
+                let label = this.gateLabels.get(tower.id);
+                if (!label) {
+                    label = this.add.text(center.x, center.y, '', {
+                        fontFamily: 'system-ui, sans-serif',
+                        fontSize: '8px',
+                        fontStyle: 'bold',
+                        color: '#ffffff',
+                        stroke: '#101614',
+                        strokeThickness: 2,
+                    }).setOrigin(0.5).setDepth(4);
+                    this.gateLabels.set(tower.id, label);
+                }
+                label.setText(getGateDirection(tower));
+                label.setPosition(center.x, center.y);
+                label.setAlpha(1);
+            } else {
+                this.gateLabels.get(tower.id)?.destroy();
+                this.gateLabels.delete(tower.id);
+            }
+
             if (isWallTower(tower)) {
                 this.renderWallHealth(tower, center);
                 continue;
@@ -2130,6 +2246,12 @@ export class GameScene extends Phaser.Scene {
             if (!activeIds.has(towerId)) {
                 sprite.destroy();
                 this.towerSprites.delete(towerId);
+            }
+        }
+        for (const [towerId, label] of this.gateLabels) {
+            if (!activeIds.has(towerId)) {
+                label.destroy();
+                this.gateLabels.delete(towerId);
             }
         }
     }
@@ -2560,6 +2682,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     private getTowerTextureKey(tower: TowerState): string {
+        if (isGateTower(tower)) {
+            return isOpenGate(tower) ? SPRITE_PATHS.gateOpen : SPRITE_PATHS.gateClosed;
+        }
         if (this.isMultiplayer && tower.teamId !== undefined) {
             const generatedTexture = GENERATED_TEAM_TOWER_TEXTURES[this.getTeamColour(tower.teamId)][tower.type];
             if (generatedTexture) {

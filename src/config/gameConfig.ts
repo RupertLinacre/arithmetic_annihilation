@@ -57,7 +57,7 @@ export const TOWER_UPGRADE_DIFFICULTIES: Record<TowerType, TowerDifficulty[]> = 
     missile: ['hard', 'hard', 'hard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard'],
     flamethrower: ['hard', 'hard', 'hard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard'],
     cluster: ['veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard', 'veryHard'],
-    wall: [],
+    wall: ['veryHard'],
     airstrike: [],
 };
 
@@ -193,6 +193,7 @@ export const TOWER_STATS: Record<TowerType, TowerLevelStats[]> = {
         { range: 714, cooldownMs: 1260, damage: 169, bulletSpeed: 668, explosionRadius: 264, fragmentCount: 24, fragmentDamage: 29, threat: 49.6 },
     ],
     wall: [
+        { range: 0, cooldownMs: 0, damage: 0, threat: 0 },
         { range: 0, cooldownMs: 0, damage: 0, threat: 0 },
     ],
     airstrike: [

@@ -22,6 +22,8 @@ const targets = {
     tarmac_3: TILE_MAX,
     tree_1: TILE_MAX,
     tree_2: TILE_MAX,
+    gate_closed: TOWER_AND_SELECTOR_MAX,
+    gate_open: TOWER_AND_SELECTOR_MAX,
     monster_1_hurt: ENEMY_MAX,
     monster_1_run: ENEMY_MAX,
     monster_1_stop: ENEMY_MAX,

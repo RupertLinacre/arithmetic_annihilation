@@ -37,10 +37,10 @@ function popCheapest(queue: QueueNode[]): QueueNode {
     return node;
 }
 
-export function buildFlowField(grid: Grid, base: GridPoint, threatCosts: CostGrid): FlowField {
+function buildFlowFieldFromTargets(grid: Grid, base: GridPoint, targetCells: readonly GridPoint[], threatCosts: CostGrid): FlowField {
     const costToBase = Array.from({ length: grid.rows }, () => Array.from({ length: grid.cols }, () => Number.POSITIVE_INFINITY));
     const direction = Array.from({ length: grid.rows }, () => Array.from({ length: grid.cols }, () => ({ x: 0, y: 0 })));
-    const baseCells = getBaseFootprint(base, grid).filter((cell) => !grid.isBlocked(cell.x, cell.y));
+    const baseCells = targetCells.filter((cell) => grid.inBounds(cell.x, cell.y) && !grid.isBlocked(cell.x, cell.y));
     const queue: QueueNode[] = [];
     for (const cell of baseCells) {
         costToBase[cell.y][cell.x] = 0;
@@ -90,6 +90,14 @@ export function buildFlowField(grid: Grid, base: GridPoint, threatCosts: CostGri
     }
 
     return { base, costToBase, direction };
+}
+
+export function buildFlowField(grid: Grid, base: GridPoint, threatCosts: CostGrid): FlowField {
+    return buildFlowFieldFromTargets(grid, base, getBaseFootprint(base, grid), threatCosts);
+}
+
+export function buildFlowFieldToCell(grid: Grid, target: GridPoint, threatCosts: CostGrid): FlowField {
+    return buildFlowFieldFromTargets(grid, target, [target], threatCosts);
 }
 
 export function sampleFlowDirection(flowField: FlowField, grid: Grid, worldPosition: Vec2, geometry: MapGeometry = GAME_CONFIG.map): Vec2 {

@@ -295,6 +295,45 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     expect(errors).toEqual([]);
 });
 
+test('a wall upgrades into a gate that opens when clicked', async ({ page }) => {
+    await page.goto('/?seed=gate-e2e&answer-mode=type-answer');
+    await startSinglePlayer(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.arithmeticAnnihilation))).toBe(true);
+    await page.getByTestId('select-wall').click();
+
+    const cell = await page.evaluate(() => window.arithmeticAnnihilation!.getFirstBuildableCell());
+    expect(cell).not.toBeNull();
+    await clickWorldPoint(page, cell!.worldX, cell!.worldY);
+    const buildAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await page.getByTestId('answer-input').fill(buildAnswer!);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTextureKeys())).toEqual(['sprites/wall.png']);
+
+    await clickWorldPoint(page, cell!.worldX, cell!.worldY);
+    await expect(page.getByTestId('delete-wall')).toHaveText('Delete wall');
+    await page.getByTestId('delete-wall').click();
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerCount())).toBe(0);
+
+    await clickWorldPoint(page, cell!.worldX, cell!.worldY);
+    const replacementBuildAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await page.getByTestId('answer-input').fill(replacementBuildAnswer!);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTextureKeys())).toEqual(['sprites/wall.png']);
+
+    await clickWorldPoint(page, cell!.worldX, cell!.worldY);
+    const upgradeAnswer = await page.evaluate(() => window.arithmeticAnnihilation!.getCurrentQuestionAnswer());
+    await page.getByTestId('answer-input').fill(upgradeAnswer!);
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTextureKeys())).toEqual(['sprites/gate_closed.png']);
+
+    await clickWorldPoint(page, cell!.worldX, cell!.worldY);
+    await expect(page.getByTestId('build-popup')).toContainText('Gate · SHUT · OUT');
+    await expect(page.getByTestId('gate-direction-in')).toHaveText('In');
+    await expect(page.getByTestId('gate-direction-out')).toHaveText('Out');
+    await page.getByTestId('gate-direction-in').click();
+    await clickWorldPoint(page, cell!.worldX, cell!.worldY);
+    await expect(page.getByTestId('build-popup')).toContainText('Gate · SHUT · IN');
+    await page.getByTestId('gate-open').click();
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getTowerTextureKeys())).toEqual(['sprites/gate_open.png']);
+});
+
 test('mobile answer flow keeps choices and uses an in-game correction number pad', async ({ page }) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await page.addInitScript(() => {

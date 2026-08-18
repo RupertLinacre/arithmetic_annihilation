@@ -1,4 +1,4 @@
-import type { EnemyState, MapGeometry, TeamId, TowerDifficulty, TowerState, TowerType } from '../types';
+import type { EnemyState, GateDirection, MapGeometry, TeamId, TowerDifficulty, TowerState, TowerType } from '../types';
 import { GAME_CONFIG, TOWER_DIFFICULTY_TO_TYPE, TOWER_STATS, TOWER_UPGRADE_DIFFICULTIES } from '../config/gameConfig';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 import { hasLineOfSight } from '../map/LineOfSight';
@@ -17,6 +17,22 @@ export function createTower(id: number, gridX: number, gridY: number, type: Towe
 
 export function isWallTower(tower: Pick<TowerState, 'type'>): boolean {
     return tower.type === 'wall';
+}
+
+export function isGateTower(tower: Pick<TowerState, 'type' | 'level'>): boolean {
+    return isWallTower(tower) && tower.level >= 2;
+}
+
+export function isOpenGate(tower: Pick<TowerState, 'type' | 'level' | 'gateOpen'>): boolean {
+    return isGateTower(tower) && tower.gateOpen === true;
+}
+
+export function isBlockingWallTower(tower: Pick<TowerState, 'type' | 'level' | 'gateOpen'>): boolean {
+    return isWallTower(tower) && !isOpenGate(tower);
+}
+
+export function getGateDirection(tower: Pick<TowerState, 'gateDirection'>): GateDirection {
+    return tower.gateDirection ?? 'out';
 }
 
 export function towerTypeForDifficulty(difficulty: TowerDifficulty): TowerType {
@@ -53,6 +69,10 @@ export function upgradeTower(tower: TowerState): boolean {
         return false;
     }
     tower.level += 1;
+    if (isGateTower(tower)) {
+        tower.gateOpen = false;
+        tower.gateDirection = 'out';
+    }
     tower.cooldownMs = Math.min(tower.cooldownMs, getTowerStats(tower).cooldownMs * 0.5);
     return true;
 }

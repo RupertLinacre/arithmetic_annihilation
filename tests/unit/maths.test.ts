@@ -28,6 +28,7 @@ describe('maths questions and upgrades', () => {
         expect(getUpgradeQuestionDifficulty({ type: 'cluster' }, 2)).toBe('veryHard');
         expect(getUpgradeQuestionDifficulty({ type: 'cluster' }, 8)).toBe('veryHard');
         expect(getUpgradeQuestionDifficulty({ type: 'cluster' }, 16)).toBe('veryHard');
+        expect(getUpgradeQuestionDifficulty({ type: 'wall' }, 2)).toBe('veryHard');
     });
 
     it('allows combat towers to upgrade through level 16', () => {

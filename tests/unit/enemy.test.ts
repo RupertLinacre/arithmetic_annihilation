@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GAME_CONFIG } from '../../src/config/gameConfig';
-import { createEnemy, updateEnemy } from '../../src/entities/Enemy';
+import { createEnemy, createEnemySpatialIndex, MAX_SEPARATION_NEIGHBORS, updateEnemy } from '../../src/entities/Enemy';
 import { cellCenter, Grid } from '../../src/map/Grid';
 import { buildFlowField, type FlowField } from '../../src/pathfinding/FlowField';
 import { createEmptyCostGrid } from '../../src/pathfinding/ThreatMap';
@@ -14,6 +14,23 @@ function createStoppedField(flowField: FlowField): FlowField {
 }
 
 describe('enemy base interaction', () => {
+    it('uses a local spatial neighborhood for crowded pens', () => {
+        const nearby = createEnemy(1, 'scout', 10, 10);
+        const adjacent = createEnemy(2, 'scout', 35, 10);
+        const distant = createEnemy(3, 'scout', 500, 500);
+        const index = createEnemySpatialIndex([nearby, adjacent, distant], 42);
+
+        expect(index.nearby(nearby)).toContain(adjacent);
+        expect(index.nearby(nearby)).not.toContain(distant);
+    });
+
+    it('caps separation work even when a large penned crowd occupies one cell', () => {
+        const crowded = Array.from({ length: 250 }, (_, index) => createEnemy(index, 'scout', 10, 10));
+        const index = createEnemySpatialIndex(crowded, 42);
+
+        expect(index.nearby(crowded[0])).toHaveLength(MAX_SEPARATION_NEIGHBORS);
+    });
+
     it('damages the base when entering any square in the 3x3 base footprint', () => {
         const grid = new Grid(8, 5, 'grass');
         const base = { x: 6, y: 2 };

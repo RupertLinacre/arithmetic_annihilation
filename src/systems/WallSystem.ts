@@ -1,10 +1,10 @@
 import { GAME_CONFIG } from '../config/gameConfig';
-import { updateEnemy } from '../entities/Enemy';
-import { isWallTower } from '../entities/Tower';
+import { updateEnemy, type EnemySpatialIndex } from '../entities/Enemy';
+import { isBlockingWallTower } from '../entities/Tower';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 import { buildFlowField, type FlowField } from '../pathfinding/FlowField';
 import type { CostGrid } from '../pathfinding/ThreatMap';
-import type { EnemyState, MapGeometry, TowerState } from '../types';
+import type { EnemyState, MapGeometry, TeamId, TowerState } from '../types';
 
 export interface WallAttackResult {
     targetedWall?: TowerState;
@@ -12,10 +12,13 @@ export interface WallAttackResult {
     destroyedWall?: TowerState;
 }
 
-interface WallObjective {
+export interface WallObjective {
     wall: TowerState;
     flowField: FlowField;
-    cost: number;
+}
+
+export interface WallRoutingCache {
+    objectives: readonly WallObjective[];
 }
 
 export function enemyHasPathToBase(enemy: EnemyState, flowField: FlowField, grid: Grid, geometry: MapGeometry): boolean {
@@ -27,7 +30,7 @@ export function findNearestWallTower(enemy: EnemyState, towers: readonly TowerSt
     let nearestWall: TowerState | undefined;
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const tower of towers) {
-        if (!isWallTower(tower) || (enemy.teamId !== undefined && tower.teamId === enemy.teamId)) {
+        if (!isBlockingWallTower(tower) || (enemy.teamId !== undefined && tower.teamId === enemy.teamId)) {
             continue;
         }
         const center = cellCenter({ x: tower.gridX, y: tower.gridY }, geometry);
@@ -45,22 +48,32 @@ function getEnemyFlowCost(enemy: EnemyState, flowField: FlowField, grid: Grid, g
     return cell ? flowField.costToBase[cell.y][cell.x] : Number.POSITIVE_INFINITY;
 }
 
-function findWallObjective(enemy: EnemyState, towers: readonly TowerState[], grid: Grid, geometry: MapGeometry, threatCosts: CostGrid): WallObjective | undefined {
+export function buildWallRoutingCache(towers: readonly TowerState[], grid: Grid, threatCosts: CostGrid, attackingTeamId?: TeamId): WallRoutingCache {
+    return {
+        objectives: towers
+            .filter((wall) => isBlockingWallTower(wall) && (attackingTeamId === undefined || wall.teamId !== attackingTeamId))
+            .map((wall) => ({
+                wall,
+                flowField: buildFlowField(grid, { x: wall.gridX, y: wall.gridY }, threatCosts),
+            })),
+    };
+}
+
+function findWallObjective(enemy: EnemyState, routingCache: WallRoutingCache, grid: Grid, geometry: MapGeometry): WallObjective | undefined {
     let bestObjective: WallObjective | undefined;
+    let bestCost = Number.POSITIVE_INFINITY;
     let bestDistance = Number.POSITIVE_INFINITY;
-    for (const wall of towers) {
-        if (!isWallTower(wall) || (enemy.teamId !== undefined && wall.teamId === enemy.teamId)) {
-            continue;
-        }
-        const wallFlowField = buildFlowField(grid, { x: wall.gridX, y: wall.gridY }, threatCosts);
-        const cost = getEnemyFlowCost(enemy, wallFlowField, grid, geometry);
+    for (const objective of routingCache.objectives) {
+        const { wall, flowField } = objective;
+        const cost = getEnemyFlowCost(enemy, flowField, grid, geometry);
         if (!Number.isFinite(cost)) {
             continue;
         }
         const center = cellCenter({ x: wall.gridX, y: wall.gridY }, geometry);
         const distance = Math.hypot(center.x - enemy.x, center.y - enemy.y);
-        if (cost < (bestObjective?.cost ?? Number.POSITIVE_INFINITY) || (cost === bestObjective?.cost && distance < bestDistance)) {
-            bestObjective = { wall, flowField: wallFlowField, cost };
+        if (cost < bestCost || (cost === bestCost && distance < bestDistance)) {
+            bestObjective = objective;
+            bestCost = cost;
             bestDistance = distance;
         }
     }
@@ -80,17 +93,17 @@ function attackWall(enemy: EnemyState, dtSeconds: number, wall: TowerState): Wal
         : { targetedWall: wall, attacked: true };
 }
 
-export function updateEnemyWallObjective(enemy: EnemyState, dtSeconds: number, towers: readonly TowerState[], baseFlowField: FlowField, grid: Grid, geometry: MapGeometry, enemies: readonly EnemyState[], threatCosts: CostGrid): WallAttackResult {
+export function updateEnemyWallObjective(enemy: EnemyState, dtSeconds: number, routingCache: WallRoutingCache, baseFlowField: FlowField, grid: Grid, geometry: MapGeometry, enemyNeighbors: readonly EnemyState[] | EnemySpatialIndex): WallAttackResult {
     if (enemyHasPathToBase(enemy, baseFlowField, grid, geometry)) {
         return { attacked: false };
     }
 
-    const objective = findWallObjective(enemy, towers, grid, geometry, threatCosts);
+    const objective = findWallObjective(enemy, routingCache, grid, geometry);
     if (!objective) {
         return { attacked: false };
     }
 
-    const reachedWall = updateEnemy(enemy, dtSeconds, objective.flowField, objective.flowField, grid, geometry, enemies);
+    const reachedWall = updateEnemy(enemy, dtSeconds, objective.flowField, objective.flowField, grid, geometry, enemyNeighbors);
     if (!reachedWall) {
         return { targetedWall: objective.wall, attacked: false };
     }

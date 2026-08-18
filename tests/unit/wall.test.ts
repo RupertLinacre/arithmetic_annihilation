@@ -5,7 +5,7 @@ import { createTower } from '../../src/entities/Tower';
 import { cellCenter, Grid } from '../../src/map/Grid';
 import { buildFlowField } from '../../src/pathfinding/FlowField';
 import { createEmptyCostGrid } from '../../src/pathfinding/ThreatMap';
-import { enemyHasPathToBase, updateEnemyWallObjective } from '../../src/systems/WallSystem';
+import { buildWallRoutingCache, enemyHasPathToBase, updateEnemyWallObjective } from '../../src/systems/WallSystem';
 
 function makeWall(id: number, x: number, y: number) {
     const wall = createTower(id, x, y, 'wall');
@@ -22,11 +22,12 @@ describe('wall towers', () => {
         grid.setTerrain(2, 2, 'tree');
         const emptyCosts = createEmptyCostGrid(grid);
         const flowField = buildFlowField(grid, { x: 6, y: 1 }, emptyCosts);
+        const wallRouting = buildWallRoutingCache([wall], grid, emptyCosts);
         const enemyPosition = cellCenter({ x: 0, y: 1 }, GAME_CONFIG.map);
         const enemy = createEnemy(1, 'grunt', enemyPosition.x, enemyPosition.y);
 
         expect(enemyHasPathToBase(enemy, flowField, grid, GAME_CONFIG.map)).toBe(false);
-        const result = updateEnemyWallObjective(enemy, 0.25, [wall], flowField, grid, GAME_CONFIG.map, [enemy], emptyCosts);
+        const result = updateEnemyWallObjective(enemy, 0.25, wallRouting, flowField, grid, GAME_CONFIG.map, [enemy]);
 
         expect(result.targetedWall).toBe(wall);
         expect(result.attacked).toBe(false);
@@ -44,10 +45,11 @@ describe('wall towers', () => {
         grid.setTerrain(2, 2, 'tree');
         const emptyCosts = createEmptyCostGrid(grid);
         const flowField = buildFlowField(grid, { x: 4, y: 1 }, emptyCosts);
+        const wallRouting = buildWallRoutingCache([wall], grid, emptyCosts);
         const enemyPosition = cellCenter({ x: 1, y: 1 }, GAME_CONFIG.map);
         const enemy = createEnemy(1, 'tank', enemyPosition.x, enemyPosition.y);
 
-        const result = updateEnemyWallObjective(enemy, 1, [wall], flowField, grid, GAME_CONFIG.map, [enemy], emptyCosts);
+        const result = updateEnemyWallObjective(enemy, 1, wallRouting, flowField, grid, GAME_CONFIG.map, [enemy]);
 
         expect(result.targetedWall).toBe(wall);
         expect(result.attacked).toBe(true);
@@ -60,14 +62,40 @@ describe('wall towers', () => {
         const wall = makeWall(1, 2, 0);
         grid.setTerrain(wall.gridX, wall.gridY, 'tree');
         const flowField = buildFlowField(grid, { x: 4, y: 1 }, createEmptyCostGrid(grid));
+        const wallRouting = buildWallRoutingCache([wall], grid, createEmptyCostGrid(grid));
         const enemyPosition = cellCenter({ x: 0, y: 1 }, GAME_CONFIG.map);
         const enemy = createEnemy(1, 'grunt', enemyPosition.x, enemyPosition.y);
 
         expect(enemyHasPathToBase(enemy, flowField, grid, GAME_CONFIG.map)).toBe(true);
-        const result = updateEnemyWallObjective(enemy, 1, [wall], flowField, grid, GAME_CONFIG.map, [enemy], createEmptyCostGrid(grid));
+        const result = updateEnemyWallObjective(enemy, 1, wallRouting, flowField, grid, GAME_CONFIG.map, [enemy]);
 
         expect(result.targetedWall).toBeUndefined();
         expect(result.attacked).toBe(false);
         expect(wall.health).toBe(GAME_CONFIG.wall.health);
+    });
+
+    it('does not route monsters toward an open gate', () => {
+        const grid = new Grid(5, 3, 'grass');
+        const gate = makeWall(1, 2, 1);
+        gate.level = 2;
+        gate.gateOpen = true;
+
+        const routing = buildWallRoutingCache([gate], grid, createEmptyCostGrid(grid));
+
+        expect(routing.objectives).toHaveLength(0);
+    });
+
+    it('routes each team only toward the opposing closed walls', () => {
+        const grid = new Grid(5, 3, 'grass');
+        const solarWall = makeWall(1, 1, 1);
+        solarWall.teamId = 'solar';
+        const lunarWall = makeWall(2, 3, 1);
+        lunarWall.teamId = 'lunar';
+        grid.setTerrain(1, 1, 'tree');
+        grid.setTerrain(3, 1, 'tree');
+
+        const routing = buildWallRoutingCache([solarWall, lunarWall], grid, createEmptyCostGrid(grid), 'solar');
+
+        expect(routing.objectives.map((objective) => objective.wall)).toEqual([lunarWall]);
     });
 });
