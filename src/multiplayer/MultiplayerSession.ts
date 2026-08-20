@@ -2,6 +2,7 @@ import Peer, { type DataConnection } from 'peerjs';
 import type { BaseMathsDifficulty } from '../systems/MathsQuestionSystem';
 import type { MultiplayerCommand, MultiplayerSnapshot, ScheduledMultiplayerCommand, TeamId } from '../types';
 import { DEFAULT_PLAYER_STRENGTH, normalizePlayerStrength } from './PlayerStrength';
+import { normalizePenCapacity } from '../config/penSettings';
 
 export type MultiplayerRole = 'host' | 'guest';
 
@@ -16,7 +17,7 @@ export interface PlayerProfile {
 type WireMessage =
     | { kind: 'join'; profile: Pick<PlayerProfile, 'id' | 'name' | 'mathsLevel' | 'strength'> }
     | { kind: 'lobby'; players: PlayerProfile[]; inviteCode: string }
-    | { kind: 'start'; seed: number; players: PlayerProfile[] }
+    | { kind: 'start'; seed: number; players: PlayerProfile[]; maxMonstersPerPen: number }
     | { kind: 'action'; command: MultiplayerCommand }
     | { kind: 'command'; command: ScheduledMultiplayerCommand }
     | { kind: 'checksum'; tick: number; checksum: string }
@@ -50,6 +51,7 @@ class MultiplayerSession {
     inviteCode = '';
     seed = 0;
     isComputerOpponent = false;
+    maxMonstersPerPen = normalizePenCapacity(undefined);
 
     private peer?: Peer;
     private connection?: DataConnection;
@@ -87,12 +89,13 @@ class MultiplayerSession {
         return normalizePlayerStrength(this.players.find((player) => player.teamId === teamId)?.strength);
     }
 
-    createMatch(name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH): string {
+    createMatch(name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH, maxMonstersPerPen = normalizePenCapacity(undefined)): string {
         this.close();
         this.mode = 'multiplayer';
         this.role = 'host';
         this.localTeamId = 'solar';
         this.inviteCode = createInviteCode();
+        this.maxMonstersPerPen = normalizePenCapacity(maxMonstersPerPen);
         const host: PlayerProfile = {
             id: this.localId,
             name: this.cleanName(name),
@@ -139,12 +142,13 @@ class MultiplayerSession {
         return this.inviteCode;
     }
 
-    startComputerMatch(name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH): number {
+    startComputerMatch(name: string, mathsLevel: BaseMathsDifficulty, strength = DEFAULT_PLAYER_STRENGTH, maxMonstersPerPen = normalizePenCapacity(undefined)): number {
         this.close();
         this.mode = 'multiplayer';
         this.role = 'host';
         this.localTeamId = 'solar';
         this.isComputerOpponent = true;
+        this.maxMonstersPerPen = normalizePenCapacity(maxMonstersPerPen);
         this.seed = Math.floor(Math.random() * 1_000_000_000);
         this.players = [
             { id: this.localId, name: this.cleanName(name), mathsLevel, teamId: 'solar', strength: normalizePlayerStrength(strength) },
@@ -203,7 +207,7 @@ class MultiplayerSession {
             return undefined;
         }
         this.seed = Math.floor(Math.random() * 1_000_000_000);
-        this.connection.send({ kind: 'start', seed: this.seed, players: this.players } satisfies WireMessage);
+        this.connection.send({ kind: 'start', seed: this.seed, players: this.players, maxMonstersPerPen: this.maxMonstersPerPen } satisfies WireMessage);
         this.emitStart();
         return this.seed;
     }
@@ -369,6 +373,7 @@ class MultiplayerSession {
         }
         if (message.kind === 'start') {
             this.seed = message.seed;
+            this.maxMonstersPerPen = normalizePenCapacity(message.maxMonstersPerPen);
             this.players = message.players.map((player) => ({ ...player, strength: normalizePlayerStrength(player.strength) }));
             this.emitStatus('Peer-to-peer game connected');
             this.emitStart();

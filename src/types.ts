@@ -46,6 +46,7 @@ export interface TowerState {
     teamId?: TeamId;
     gateOpen?: boolean;
     gateDirection?: GateDirection;
+    gateReleaseCooldownMs?: number;
 }
 
 export interface EnemyState {
@@ -133,6 +134,7 @@ export interface MultiplayerSnapshot {
     tick: number;
     elapsedMs: number;
     baseHealth: Record<TeamId, number>;
+    maxMonstersPerPen: number;
     towers: TowerState[];
     enemies: EnemyState[];
     projectiles: ProjectileState[];
@@ -167,6 +169,7 @@ export type MultiplayerCommand =
     | { kind: 'deleteWall'; teamId: TeamId; towerId: number }
     | { kind: 'toggleGate'; teamId: TeamId; towerId: number }
     | { kind: 'setGateDirection'; teamId: TeamId; towerId: number; direction: GateDirection }
+    | { kind: 'setPenCapacity'; teamId: TeamId; maxMonsters: number }
     | { kind: 'upgradeGenerator'; teamId: TeamId; track: MonsterGeneratorTrack }
     | { kind: 'answer'; teamId: TeamId; correct: boolean; value: 1 | 2 };
 

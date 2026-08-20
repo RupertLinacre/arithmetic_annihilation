@@ -1,4 +1,5 @@
 import { updateEnemy, type EnemySpatialIndex } from '../entities/Enemy';
+import { GAME_CONFIG } from '../config/gameConfig';
 import { getGateDirection, isGateTower, isOpenGate } from '../entities/Tower';
 import { cellCenter, eightNeighbors, Grid, pointKey, worldToGrid } from '../map/Grid';
 import { buildFlowFieldToCell, type FlowField } from '../pathfinding/FlowField';
@@ -12,6 +13,7 @@ export interface GateRoutingObjective {
     insideCell: GridPoint;
     outsideCell: GridPoint;
     insideCells: ReadonlySet<string>;
+    releasedThisUpdate: boolean;
 }
 
 export interface GateRoutingCache {
@@ -91,9 +93,25 @@ export function buildGateRoutingCache(towers: readonly TowerState[], grid: Grid,
         const sides = findGateSides(gate, grid);
         if (!sides) continue;
         const flowField = buildFlowFieldToCell(grid, { x: gate.gridX, y: gate.gridY }, threatCosts);
-        objectives.push({ gate, flowField, holdingFlowField: createHoldingFlowField(flowField), ...sides });
+        objectives.push({ gate, flowField, holdingFlowField: createHoldingFlowField(flowField), releasedThisUpdate: false, ...sides });
     }
     return { objectives };
+}
+
+export function advanceGateRoutingCache(routingCache: GateRoutingCache, deltaMs: number): void {
+    for (const objective of routingCache.objectives) {
+        objective.releasedThisUpdate = false;
+        const cooldownMs = objective.gate.gateReleaseCooldownMs ?? 0;
+        objective.gate.gateReleaseCooldownMs = cooldownMs > 0 ? cooldownMs - deltaMs : 0;
+    }
+}
+
+function getAllEnemies(enemies: readonly EnemyState[] | EnemySpatialIndex): readonly EnemyState[] {
+    return 'all' in enemies ? enemies.all : enemies;
+}
+
+function pennedMonsterCount(gateId: number, enemies: readonly EnemyState[] | EnemySpatialIndex): number {
+    return getAllEnemies(enemies).filter((enemy) => enemy.health > 0 && enemy.pennedByGateId === gateId).length;
 }
 
 function objectiveCost(enemy: EnemyState, objective: GateRoutingObjective, grid: Grid, geometry: MapGeometry): number {
@@ -125,7 +143,7 @@ function holdInsidePen(enemy: EnemyState, objective: GateRoutingObjective, dtSec
     }
 }
 
-export function updateEnemyGateObjective(enemy: EnemyState, dtSeconds: number, routingCache: GateRoutingCache, grid: Grid, geometry: MapGeometry, enemyNeighbors: readonly EnemyState[] | EnemySpatialIndex): GateUpdateResult {
+export function updateEnemyGateObjective(enemy: EnemyState, dtSeconds: number, routingCache: GateRoutingCache, grid: Grid, geometry: MapGeometry, enemyNeighbors: readonly EnemyState[] | EnemySpatialIndex, maxMonstersPerPen = GAME_CONFIG.pen.maxMonsters): GateUpdateResult {
     if (enemy.pennedByGateId !== undefined) {
         const objective = routingCache.objectives.find(({ gate }) => gate.id === enemy.pennedByGateId);
         if (!objective) {
@@ -133,10 +151,16 @@ export function updateEnemyGateObjective(enemy: EnemyState, dtSeconds: number, r
             return { handled: false };
         }
         if (isOpenGate(objective.gate) && getGateDirection(objective.gate) === 'out') {
+            if (objective.releasedThisUpdate || (objective.gate.gateReleaseCooldownMs ?? 0) > 0) {
+                holdInsidePen(enemy, objective, dtSeconds, grid, geometry, enemyNeighbors);
+                return { handled: true };
+            }
             const reachedGate = updateEnemy(enemy, dtSeconds, objective.flowField, objective.flowField, grid, geometry, enemyNeighbors, true);
             if (reachedGate) {
                 moveToSide(enemy, objective.outsideCell, geometry);
                 enemy.pennedByGateId = undefined;
+                objective.releasedThisUpdate = true;
+                objective.gate.gateReleaseCooldownMs = (objective.gate.gateReleaseCooldownMs ?? 0) + GAME_CONFIG.pen.releaseIntervalMs;
                 return { handled: true, released: true };
             }
             return { handled: true };
@@ -149,6 +173,7 @@ export function updateEnemyGateObjective(enemy: EnemyState, dtSeconds: number, r
     let bestCost = Number.POSITIVE_INFINITY;
     for (const objective of routingCache.objectives) {
         if (!isOpenGate(objective.gate) || getGateDirection(objective.gate) !== 'in') continue;
+        if (pennedMonsterCount(objective.gate.id, enemyNeighbors) >= maxMonstersPerPen) continue;
         const cost = objectiveCost(enemy, objective, grid, geometry);
         if (cost < bestCost) {
             target = objective;

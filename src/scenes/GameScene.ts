@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ENEMY_STATS, GAME_CONFIG, TOWER_COLORS } from '../config/gameConfig';
+import { normalizePenCapacity, PEN_CAPACITY_STORAGE_KEY, PEN_CAPACITY_URL_KEY, readSavedPenCapacity } from '../config/penSettings';
 import { SeededRandom } from '../core/SeededRandom';
 import { canUpgradeTower, createTower, getGateDirection, isGateTower, isOpenGate, isWallTower, upgradeTower } from '../entities/Tower';
 import { createEnemy, createEnemySpatialIndex, updateEnemy } from '../entities/Enemy';
@@ -28,7 +29,7 @@ import { EnemySpawner, isGameDifficulty, type GameDifficulty } from '../systems/
 import { EffectsSystem } from '../systems/EffectsSystem';
 import { ProjectileSystem } from '../systems/ProjectileSystem';
 import { TowerSystem, type AirstrikeImpactCell } from '../systems/TowerSystem';
-import { buildGateRoutingCache, updateEnemyGateObjective, type GateRoutingCache } from '../systems/GateSystem';
+import { advanceGateRoutingCache, buildGateRoutingCache, updateEnemyGateObjective, type GateRoutingCache } from '../systems/GateSystem';
 import { buildWallRoutingCache, updateEnemyWallObjective, type WallRoutingCache } from '../systems/WallSystem';
 import {
     BASE_MATHS_DIFFICULTY_LABELS,
@@ -386,6 +387,7 @@ export class GameScene extends Phaser.Scene {
     private threatCostsByTeam?: Record<TeamId, CostGrid>;
     private baseDamageFlashMs = 0;
     private spawnRate: GameDifficulty = 'medium';
+    private maxMonstersPerPen = GAME_CONFIG.pen.maxMonsters;
     private baseDifficulty: BaseMathsDifficulty = 'year3';
     private mobileAnswerMode: MobileAnswerMode = 'multiple-choice';
     private elapsedMs = 0;
@@ -436,6 +438,7 @@ export class GameScene extends Phaser.Scene {
             ? multiplayerSession.seed
             : seedParam ? SeededRandom.hash(seedParam) : Date.now() % 1000000000;
         this.spawnRate = this.readSavedSpawnRate();
+        this.maxMonstersPerPen = this.isMultiplayer ? multiplayerSession.maxMonstersPerPen : readSavedPenCapacity();
         this.baseDifficulty = this.readSavedBaseDifficulty();
         this.mobileAnswerMode = this.readSavedMobileAnswerMode();
         this.musicVolume = this.readSavedMusicVolume();
@@ -624,13 +627,18 @@ export class GameScene extends Phaser.Scene {
         const enemySurvivors: EnemyState[] = [];
         let baseDamageTaken = 0;
         let wallDestroyed = false;
+        if (this.isMultiplayer && this.gateRoutingCaches) {
+            for (const teamId of TEAMS) {
+                advanceGateRoutingCache(this.gateRoutingCaches[teamId], deltaMs);
+            }
+        }
         const enemySpatialIndex = createEnemySpatialIndex(this.enemies);
         for (const enemy of this.enemies) {
             const targetTeam = this.isMultiplayer ? opponentOf(enemy.teamId ?? 'solar') : 'lunar';
             const flowField = this.isMultiplayer ? this.flowFields![targetTeam] : this.flowField;
             const emergencyFlowField = this.isMultiplayer ? this.emergencyFlowFields![targetTeam] : this.emergencyFlowField;
             if (this.isMultiplayer && enemy.teamId !== undefined) {
-                const gateResult = updateEnemyGateObjective(enemy, deltaMs / 1000, this.gateRoutingCaches![enemy.teamId], this.generatedMap.grid, GAME_CONFIG.map, enemySpatialIndex);
+                const gateResult = updateEnemyGateObjective(enemy, deltaMs / 1000, this.gateRoutingCaches![enemy.teamId], this.generatedMap.grid, GAME_CONFIG.map, enemySpatialIndex, this.maxMonstersPerPen);
                 if (gateResult.handled) {
                     if (enemy.health > 0) enemySurvivors.push(enemy);
                     continue;
@@ -912,6 +920,7 @@ export class GameScene extends Phaser.Scene {
         if (!isGateTower(tower) || (this.isMultiplayer && tower.teamId !== teamId)) return false;
         if (getGateDirection(tower) === direction) return false;
         tower.gateDirection = direction;
+        tower.gateReleaseCooldownMs = 0;
         this.rebuildFlowField();
         return true;
     }
@@ -973,6 +982,8 @@ export class GameScene extends Phaser.Scene {
         } else if (command.kind === 'setGateDirection') {
             const tower = this.towers.find((candidate) => candidate.id === command.towerId);
             if (tower) this.setGateDirection(tower, command.direction);
+        } else if (command.kind === 'setPenCapacity') {
+            this.setMaxMonstersPerPen(command.maxMonsters);
         }
     }
 
@@ -1008,6 +1019,10 @@ export class GameScene extends Phaser.Scene {
         if (command.kind === 'setGateDirection') {
             const tower = this.towers.find((candidate) => candidate.id === command.towerId);
             if (tower) this.setGateDirection(tower, command.direction, command.teamId);
+            return;
+        }
+        if (command.kind === 'setPenCapacity') {
+            this.setMaxMonstersPerPen(command.maxMonsters);
             return;
         }
         if (command.kind === 'upgradeGenerator') {
@@ -1152,6 +1167,7 @@ export class GameScene extends Phaser.Scene {
             tick: this.multiplayerTick,
             strength: this.multiplayerStrengthByTeam,
             health: this.baseHealthByTeam,
+            maxMonstersPerPen: this.maxMonstersPerPen,
             towers: this.towers.map((tower) => ({
                 id: tower.id,
                 type: tower.type,
@@ -1161,6 +1177,7 @@ export class GameScene extends Phaser.Scene {
                 level: tower.level,
                 gateOpen: tower.gateOpen ?? false,
                 gateDirection: tower.gateDirection ?? 'out',
+                gateReleaseCooldownMs: stableNumber(tower.gateReleaseCooldownMs ?? 0),
                 cooldownMs: stableNumber(tower.cooldownMs),
             })),
             enemies: this.enemies.map((enemy) => ({
@@ -1430,6 +1447,7 @@ export class GameScene extends Phaser.Scene {
             tick: this.multiplayerTick,
             elapsedMs: this.elapsedMs,
             baseHealth: { ...this.baseHealthByTeam },
+            maxMonstersPerPen: this.maxMonstersPerPen,
             towers: this.towers.map((tower) => ({ ...tower })),
             enemies: this.enemies.map((enemy) => ({
                 ...enemy,
@@ -1477,6 +1495,7 @@ export class GameScene extends Phaser.Scene {
         this.multiplayerAccumulatorMs = 0;
         this.elapsedMs = snapshot.elapsedMs;
         this.baseHealthByTeam = { ...snapshot.baseHealth };
+        this.setMaxMonstersPerPen(snapshot.maxMonstersPerPen);
         this.towers = snapshot.towers.map((tower) => ({ ...tower }));
         for (const tower of this.towers) {
             if (tower.type === 'wall' && !isOpenGate(tower)) {
@@ -1641,6 +1660,7 @@ export class GameScene extends Phaser.Scene {
         const button = document.querySelector<HTMLButtonElement>('[data-testid="settings-button"]')!;
         const popup = document.querySelector<HTMLElement>('[data-testid="settings-popup"]')!;
         const spawnRateSelect = document.querySelector<HTMLSelectElement>('[data-testid="spawn-rate-select"]')!;
+        const penCapacityInput = document.querySelector<HTMLInputElement>('[data-testid="pen-capacity-input"]')!;
         const baseDifficultySelect = document.querySelector<HTMLSelectElement>('[data-testid="base-difficulty-select"]')!;
         const answerModeSelect = document.querySelector<HTMLSelectElement>('[data-testid="answer-mode-select"]')!;
         const leaveGameButton = document.querySelector<HTMLButtonElement>('[data-testid="leave-game-button"]')!;
@@ -1674,6 +1694,18 @@ export class GameScene extends Phaser.Scene {
             if (isGameDifficulty(value) && value !== this.spawnRate) {
                 this.setSpawnRate(value);
                 restartGame();
+            }
+        });
+        penCapacityInput.addEventListener('change', () => {
+            const maxMonsters = normalizePenCapacity(penCapacityInput.value);
+            if (maxMonsters === this.maxMonstersPerPen) {
+                this.syncSettingsControls();
+                return;
+            }
+            if (this.isMultiplayer) {
+                this.requestCommand({ kind: 'setPenCapacity', teamId: this.localTeamId, maxMonsters });
+            } else {
+                this.setMaxMonstersPerPen(maxMonsters);
             }
         });
         baseDifficultySelect.addEventListener('change', () => {
@@ -1794,6 +1826,7 @@ export class GameScene extends Phaser.Scene {
     private syncUrlOptions(): void {
         const params = new URLSearchParams(window.location.search);
         params.set(URL_OPTION_KEYS.spawnRate, this.spawnRate);
+        params.set(PEN_CAPACITY_URL_KEY, String(this.maxMonstersPerPen));
         params.set(URL_OPTION_KEYS.baseDifficulty, this.baseDifficulty);
         params.set(URL_OPTION_KEYS.answerMode, this.mobileAnswerMode);
         params.set(URL_OPTION_KEYS.musicVolume, String(this.musicVolume));
@@ -1805,6 +1838,14 @@ export class GameScene extends Phaser.Scene {
     private setSpawnRate(spawnRate: GameDifficulty): void {
         this.spawnRate = spawnRate;
         window.localStorage.setItem(SPAWN_RATE_STORAGE_KEY, spawnRate);
+        this.syncSettingsControls();
+        this.syncUrlOptions();
+    }
+
+    private setMaxMonstersPerPen(maxMonsters: number): void {
+        this.maxMonstersPerPen = normalizePenCapacity(maxMonsters);
+        multiplayerSession.maxMonstersPerPen = this.maxMonstersPerPen;
+        window.localStorage.setItem(PEN_CAPACITY_STORAGE_KEY, String(this.maxMonstersPerPen));
         this.syncSettingsControls();
         this.syncUrlOptions();
     }
@@ -1945,6 +1986,10 @@ export class GameScene extends Phaser.Scene {
         if (spawnRateSelect) {
             spawnRateSelect.value = this.spawnRate;
         }
+        const penCapacityInput = document.querySelector<HTMLInputElement>('[data-testid="pen-capacity-input"]');
+        if (penCapacityInput) {
+            penCapacityInput.value = String(this.maxMonstersPerPen);
+        }
         const baseDifficultySelect = document.querySelector<HTMLSelectElement>('[data-testid="base-difficulty-select"]');
         if (baseDifficultySelect) {
             baseDifficultySelect.value = this.baseDifficulty;
@@ -1957,7 +2002,7 @@ export class GameScene extends Phaser.Scene {
         if (popup) {
             popup.setAttribute(
                 'aria-label',
-                `Settings, spawn rate ${SPAWN_RATE_LABELS[this.spawnRate]}, base difficulty ${BASE_MATHS_DIFFICULTY_LABELS[this.baseDifficulty]}, mobile answers ${ANSWER_MODE_LABELS[this.mobileAnswerMode]}`,
+                `Settings, spawn rate ${SPAWN_RATE_LABELS[this.spawnRate]}, monsters per pen ${this.maxMonstersPerPen}, base difficulty ${BASE_MATHS_DIFFICULTY_LABELS[this.baseDifficulty]}, mobile answers ${ANSWER_MODE_LABELS[this.mobileAnswerMode]}`,
             );
         }
     }
@@ -2865,6 +2910,8 @@ export class GameScene extends Phaser.Scene {
             getCurrentQuestionYearLevel: () => this.panel.getCurrentQuestionYearLevel(),
             getSpawnRate: () => this.spawnRate,
             setSpawnRate: (spawnRate: GameDifficulty) => this.setSpawnRate(spawnRate),
+            getMaxMonstersPerPen: () => this.maxMonstersPerPen,
+            setMaxMonstersPerPen: (maxMonsters: number) => this.setMaxMonstersPerPen(maxMonsters),
             getBaseDifficulty: () => this.baseDifficulty,
             setBaseDifficulty: (baseDifficulty: BaseMathsDifficulty) => this.setBaseDifficulty(baseDifficulty),
             getMobileAnswerMode: () => this.mobileAnswerMode,

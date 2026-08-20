@@ -6,6 +6,7 @@ import { sampleFlowDirection } from '../pathfinding/FlowField';
 import { cellCenter, Grid, worldToGrid } from '../map/Grid';
 
 export interface EnemySpatialIndex {
+    readonly all: readonly EnemyState[];
     nearby(enemy: EnemyState): readonly EnemyState[];
 }
 
@@ -29,6 +30,7 @@ export function createEnemySpatialIndex(enemies: readonly EnemyState[], bucketSi
         }
     }
     return {
+        all: enemies,
         nearby(enemy) {
             const centerX = bucketCoordinate(enemy.x);
             const centerY = bucketCoordinate(enemy.y);

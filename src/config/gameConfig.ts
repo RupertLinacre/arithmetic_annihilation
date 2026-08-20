@@ -31,6 +31,12 @@ export const GAME_CONFIG = {
     wall: {
         health: 10,
     },
+    pen: {
+        maxMonsters: 50,
+        minMonsters: 1,
+        maxConfigurableMonsters: 500,
+        releaseIntervalMs: 50,
+    },
     mapGenerationAttempts: 50,
     uiPanelHeight: 188,
 };

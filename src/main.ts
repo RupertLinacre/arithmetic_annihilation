@@ -6,6 +6,7 @@ import { isMobileLayout } from './ui/mobile';
 import { INVITE_CODE_LENGTH, multiplayerSession } from './multiplayer/MultiplayerSession';
 import { normalizePlayerStrength } from './multiplayer/PlayerStrength';
 import type { BaseMathsDifficulty } from './systems/MathsQuestionSystem';
+import { readSavedPenCapacity } from './config/penSettings';
 
 const baseUrl = import.meta.env.BASE_URL;
 
@@ -180,14 +181,14 @@ function setupModeScreen(): void {
     });
     document.querySelector<HTMLButtonElement>('[data-testid="create-match-button"]')!.addEventListener('click', () => {
         saveProfile();
-        const code = multiplayerSession.createMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
+        const code = multiplayerSession.createMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength(), readSavedPenCapacity());
         inviteCode.textContent = code;
         showLobby(true);
         renderPlayers();
     });
     document.querySelector<HTMLButtonElement>('[data-testid="computer-match-button"]')!.addEventListener('click', () => {
         saveProfile();
-        multiplayerSession.startComputerMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength());
+        multiplayerSession.startComputerMatch(nameInput.value, levelSelect.value as BaseMathsDifficulty, selectedStrength(), readSavedPenCapacity());
     });
     document.querySelector<HTMLButtonElement>('[data-testid="join-match-button"]')!.addEventListener('click', () => {
         const code = codeInput.value.trim().toUpperCase();

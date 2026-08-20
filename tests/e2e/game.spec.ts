@@ -39,6 +39,8 @@ declare global {
             getCurrentQuestionYearLevel: () => string | undefined;
             getSpawnRate: () => string;
             setSpawnRate: (spawnRate: 'veryEasy' | 'easy' | 'medium' | 'hard' | 'veryHard') => void;
+            getMaxMonstersPerPen: () => number;
+            setMaxMonstersPerPen: (maxMonsters: number) => void;
             getBaseDifficulty: () => string;
             setBaseDifficulty: (difficulty: string) => void;
             getMobileAnswerMode: () => string;
@@ -109,6 +111,8 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     await expect.poll(() => new URL(page.url()).searchParams.get('base-difficulty')).toBe('year3');
     await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMobileAnswerMode())).toBe('multiple-choice');
     await expect.poll(() => new URL(page.url()).searchParams.get('answer-mode')).toBe('multiple-choice');
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMaxMonstersPerPen())).toBe(50);
+    await expect.poll(() => new URL(page.url()).searchParams.get('pen-capacity')).toBe('50');
     await expect(page.getByTestId('music-mute-button')).toBeHidden();
     await expect(page.getByTestId('music-volume-slider')).toBeHidden();
     await page.getByTestId('settings-button').click();
@@ -136,6 +140,13 @@ test('arithmetic tower defence MVP is playable in the browser', async ({ page })
     const waitForGameReady = async () => {
         await page.waitForFunction(() => Boolean(window.arithmeticAnnihilation) && document.querySelector('canvas') !== null);
     };
+
+    await openSettings();
+    await page.getByTestId('pen-capacity-input').fill('75');
+    await page.getByTestId('pen-capacity-input').blur();
+    await expect.poll(() => page.evaluate(() => window.arithmeticAnnihilation!.getMaxMonstersPerPen())).toBe(75);
+    await expect.poll(() => new URL(page.url()).searchParams.get('pen-capacity')).toBe('75');
+    await page.getByTestId('settings-button').click();
 
     await openSettings();
     await page.getByTestId('spawn-rate-select').selectOption('hard');

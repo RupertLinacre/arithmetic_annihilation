@@ -374,6 +374,9 @@ export class TowerSystem {
             if (enemy.health <= 0 || (teamId !== undefined && enemy.teamId === teamId)) {
                 continue;
             }
+            if (enemy.pennedByGateId !== undefined) {
+                continue;
+            }
 
             const enemyCell = worldToGrid({ x: enemy.x, y: enemy.y }, grid, geometry);
             const isInKillZone = enemyCell

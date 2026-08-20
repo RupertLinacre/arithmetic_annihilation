@@ -261,4 +261,20 @@ describe('tower target selection', () => {
         expect(near.x).toBeGreaterThan(nearStartX);
         expect(far.x).toBeGreaterThan(farStartX);
     });
+
+    it('does not damage or knock back monsters protected inside a pen', () => {
+        const grid = new Grid(8, 8, 'grass');
+        const target = { x: 3, y: 3 };
+        const center = cellCenter(target, GAME_CONFIG.map);
+        const penned = createEnemy(1, 'tank', center.x, center.y);
+        const exposed = createEnemy(2, 'tank', center.x, center.y);
+        penned.pennedByGateId = 42;
+        const pennedStart = { x: penned.x, y: penned.y, health: penned.health };
+
+        const result = new TowerSystem().detonateAirstrike(target, [penned, exposed], grid, GAME_CONFIG.map);
+
+        expect(penned).toMatchObject(pennedStart);
+        expect(exposed.health).toBeLessThanOrEqual(0);
+        expect(result.kills).toBe(1);
+    });
 });
