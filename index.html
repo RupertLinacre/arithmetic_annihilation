@@ -19,8 +19,8 @@
         gtag('js', new Date());
         gtag('config', 'G-94373ZKHEE');
     </script>
-  <script type="module" crossorigin src="/arithmetic_annihilation/assets/index-DTWxWFe4.js"></script>
-  <link rel="stylesheet" crossorigin href="/arithmetic_annihilation/assets/index-DO4mvQWl.css">
+  <script type="module" crossorigin src="/arithmetic_annihilation/assets/index-7zgaMNq2.js"></script>
+  <link rel="stylesheet" crossorigin href="/arithmetic_annihilation/assets/index-UXBT2yhB.css">
 </head>
 
 <body>
@@ -167,6 +167,11 @@
                         <option value="veryHard">Very high</option>
                     </select>
                 </label>
+                <label class="settings-field" for="pen-capacity-input">
+                    <span>Monsters per pen</span>
+                    <input id="pen-capacity-input" class="settings-select" type="number" min="1" max="500" step="1"
+                        value="50" inputmode="numeric" data-testid="pen-capacity-input" />
+                </label>
                 <label class="settings-field" for="base-difficulty-select">
                     <span>Base difficulty</span>
                     <select id="base-difficulty-select" class="settings-select" data-testid="base-difficulty-select">
@@ -186,14 +191,6 @@
                         <option value="type-answer">Type the answer</option>
                     </select>
                 </label>
-                <div class="settings-field">
-                    <span>Display</span>
-                    <button type="button" class="settings-fullscreen-button" aria-pressed="false"
-                        data-testid="fullscreen-button">Enter fullscreen</button>
-                    <small class="settings-help" hidden data-fullscreen-status>
-                        Fullscreen is not supported by this browser.
-                    </small>
-                </div>
                 <button type="button" class="primary-button settings-leave-button"
                     data-testid="leave-game-button">Leave game</button>
             </section>
