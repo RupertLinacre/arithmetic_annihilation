@@ -4,6 +4,7 @@ import { getTowerStats } from '../pathfinding/ThreatMap';
 import { MathsQuestionSystem } from '../systems/MathsQuestionSystem';
 import type { GateDirection, GridPoint, MathsQuestion, TowerDifficulty, TowerState, TowerType, Vec2 } from '../types';
 import { getMultiplayerTowerQuestionDifficulty } from '../multiplayer/BalanceConfig';
+import { QuestionSkipBank } from './QuestionSkipBank';
 
 const BUILD_TOWER_TYPES: TowerType[] = ['easy', 'spray', 'missile', 'flamethrower', 'cluster', 'wall', 'airstrike'];
 const spritePath = (path: string): string => `${import.meta.env.BASE_URL}${path}`;
@@ -20,6 +21,7 @@ const BUILD_MENU_PADDING = 12;
 const BUILD_MENU_OFFSET = 14;
 const NUMBER_PAD_DIGITS = ['7', '8', '9', '4', '5', '6', '1', '2', '3'] as const;
 const MAX_NUMBER_PAD_LENGTH = 16;
+const INCORRECT_ANSWER_DELAY_MS = 6_000;
 
 export type MobileAnswerMode = 'multiple-choice' | 'type-answer';
 type NumberPadControlKey = 'backspace' | 'spacer';
@@ -66,12 +68,14 @@ export class BottomPanel {
     private readonly toggleButton = document.querySelector<HTMLButtonElement>('[data-panel-toggle]')!;
     private readonly buildMenu: HTMLElement;
     private closeTimeoutId: number | undefined;
+    private incorrectDelayIntervalId: number | undefined;
     private popupAnchor: Vec2 | undefined;
     private currentQuestion: MathsQuestion | undefined;
     private pendingAction: PendingAction | undefined;
     private correctAnswerAccepted = false;
     private questionActive = false;
     private correctionRequired = false;
+    private readonly skipBank = new QuestionSkipBank();
     private selectedBuildTower: BuildTowerSelection = 'easy';
     private panelExpanded = true;
     private readonly mobile: BottomPanelMobileOptions | undefined;
@@ -101,7 +105,7 @@ export class BottomPanel {
     }
 
     openBuild(cell: GridPoint, anchor: Vec2): void {
-        if (this.correctionRequired) {
+        if (this.questionActive || this.correctionRequired) {
             return;
         }
         this.clearPendingClose();
@@ -114,7 +118,7 @@ export class BottomPanel {
     }
 
     openUpgrade(tower: TowerState, anchor: Vec2): void {
-        if (this.correctionRequired) {
+        if (this.questionActive || this.correctionRequired) {
             return;
         }
         this.clearPendingClose();
@@ -142,7 +146,7 @@ export class BottomPanel {
     }
 
     openCustomQuestion(difficulty: TowerDifficulty, anchor: Vec2, onSuccess: () => void): void {
-        if (this.correctionRequired) {
+        if (this.questionActive || this.correctionRequired) {
             return;
         }
         this.popupAnchor = anchor;
@@ -150,7 +154,7 @@ export class BottomPanel {
     }
 
     openGateControls(tower: TowerState, anchor: Vec2): void {
-        if (this.correctionRequired) return;
+        if (this.questionActive || this.correctionRequired) return;
         this.clearPendingClose();
         this.popupAnchor = anchor;
         this.setQuestionActive(false);
@@ -214,7 +218,11 @@ export class BottomPanel {
         if (this.correctionRequired && !force) {
             return;
         }
+        if (this.questionActive && !force) {
+            if (!this.skipBank.spend()) return;
+        }
         this.clearPendingClose();
+        this.clearIncorrectDelay();
         this.correctionRequired = false;
         this.setQuestionActive(false);
         this.hideBuildMenu();
@@ -241,7 +249,17 @@ export class BottomPanel {
         return this.currentQuestion?.yearLevel;
     }
 
+    getAvailableSkips(): number {
+        return this.skipBank.available;
+    }
+
+    resetQuestionProgress(): void {
+        this.skipBank.reset();
+        this.close(true);
+    }
+
     setMobileAnswerMode(answerMode: MobileAnswerMode): void {
+        if (this.questionActive || this.correctionRequired) return;
         this.mobileAnswerMode = answerMode;
         this.close(true);
     }
@@ -253,6 +271,7 @@ export class BottomPanel {
 
     private showQuestion(action: PendingAction): void {
         this.clearPendingClose();
+        this.clearIncorrectDelay();
         this.correctionRequired = false;
         this.hideBuildMenu();
         this.pendingAction = action;
@@ -270,6 +289,7 @@ export class BottomPanel {
         const correct = this.isCorrectAnswer(answer);
         if (correct) {
             this.correctAnswerAccepted = true;
+            this.skipBank.recordCorrectAnswer();
         }
         this.callbacks.onAnswered(correct, this.currentQuestion.difficulty);
         if (correct) {
@@ -316,8 +336,17 @@ export class BottomPanel {
             header.append(heading);
         }
 
-        const closeButton = this.createButton('icon-button build-popup-close', '×', 'answer-popup-close');
-        closeButton.setAttribute('aria-label', 'Close answers');
+        const availableSkips = this.skipBank.available;
+        const skipLabel = availableSkips > 0 ? `Skip (${availableSkips} left)` : 'No skips left';
+        const closeButton = this.createButton('icon-button build-popup-close question-skip-button', skipLabel, 'answer-popup-close');
+        closeButton.disabled = availableSkips <= 0;
+        closeButton.setAttribute(
+            'aria-label',
+            availableSkips > 0
+                ? `Skip question. ${availableSkips} ${availableSkips === 1 ? 'skip' : 'skips'} available.`
+                : 'Cannot skip question. No skips available.',
+        );
+        closeButton.title = availableSkips > 0 ? `Skip question (${availableSkips} available)` : 'Answer correctly to continue';
         closeButton.addEventListener('click', () => this.close());
         header.append(closeButton);
 
@@ -371,20 +400,33 @@ export class BottomPanel {
         const feedback = this.createParagraph('feedback answer-review-answer', `Incorrect — correct answer: ${question.correctAnswer}`);
         const instruction = this.createParagraph(
             'meta-line answer-review-prompt',
-            this.mobile ? 'Tap the correct answer to continue.' : 'Type the correct answer to continue.',
+            'Wait 6 seconds to continue.',
         );
+        instruction.dataset.testid = 'incorrect-answer-wait';
         const correctionControl = this.mobile
             ? this.createAnswerNumberPad(question, () => this.showQuestion(action))
             : this.createAnswerInput(question, 'answer-review-input', () => this.showQuestion(action));
+        this.setCorrectionControlDisabled(correctionControl, true);
 
         this.buildMenu.append(header, questionText, feedback, instruction, correctionControl);
         this.buildMenu.hidden = false;
         this.buildMenu.classList.add('is-answer-popup');
         this.buildMenu.classList.add('is-open');
         this.positionBuildMenu(this.popupAnchor);
-        if (!this.mobile) {
-            correctionControl.focus();
-        }
+        const unlockAtMs = Date.now() + INCORRECT_ANSWER_DELAY_MS;
+        const updateDelay = (): void => {
+            const secondsRemaining = Math.max(0, Math.ceil((unlockAtMs - Date.now()) / 1_000));
+            if (secondsRemaining > 0) {
+                instruction.textContent = `Wait ${secondsRemaining} ${secondsRemaining === 1 ? 'second' : 'seconds'} to continue.`;
+                return;
+            }
+            this.clearIncorrectDelay();
+            instruction.textContent = this.mobile ? 'Tap the correct answer to continue.' : 'Type the correct answer to continue.';
+            this.setCorrectionControlDisabled(correctionControl, false);
+            if (!this.mobile) correctionControl.focus();
+        };
+        updateDelay();
+        this.incorrectDelayIntervalId = window.setInterval(updateDelay, 200);
     }
 
     private showMessagePopup(kicker: string, titleText: string, detail: string, message: string): void {
@@ -461,6 +503,23 @@ export class BottomPanel {
         this.closeTimeoutId = undefined;
     }
 
+    private clearIncorrectDelay(): void {
+        if (this.incorrectDelayIntervalId === undefined) return;
+        window.clearInterval(this.incorrectDelayIntervalId);
+        this.incorrectDelayIntervalId = undefined;
+    }
+
+    private setCorrectionControlDisabled(control: HTMLElement, disabled: boolean): void {
+        if (control instanceof HTMLInputElement) {
+            control.disabled = disabled;
+            return;
+        }
+        control.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+            button.disabled = disabled;
+        });
+        control.setAttribute('aria-disabled', String(disabled));
+    }
+
     private normalizeAnswerInput(value: string): string {
         return value.trim().replace(/\s+/g, '').toLowerCase();
     }
@@ -505,6 +564,9 @@ export class BottomPanel {
             }
 
             event.preventDefault();
+            if (this.normalizeAnswerInput(answerInput.value).length === 0) {
+                return;
+            }
             if (!this.isCorrectAnswer(answerInput.value) && onReject) {
                 onReject(answerInput.value);
             }

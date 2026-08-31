@@ -517,7 +517,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.isMultiplayer) {
             return;
         }
-        this.panel.close(true);
+        this.panel.resetQuestionProgress();
         this.multiplayerStrengthByTeam = {
             solar: multiplayerSession.getPlayerStrength('solar'),
             lunar: multiplayerSession.getPlayerStrength('lunar'),
@@ -1753,6 +1753,8 @@ export class GameScene extends Phaser.Scene {
 
     private setQuestionPause(isPaused: boolean): void {
         this.questionPauseActive = isPaused;
+        const settingsButton = document.querySelector<HTMLButtonElement>('[data-testid="settings-button"]');
+        if (settingsButton) settingsButton.disabled = isPaused;
         this.mobileLayout?.setQuestionActive(isPaused);
         this.syncPauseState();
     }
@@ -2908,6 +2910,7 @@ export class GameScene extends Phaser.Scene {
             isPaused: () => this.isPaused,
             getCurrentQuestionAnswer: () => this.panel.getCurrentQuestionAnswer(),
             getCurrentQuestionYearLevel: () => this.panel.getCurrentQuestionYearLevel(),
+            getAvailableSkips: () => this.panel.getAvailableSkips(),
             getSpawnRate: () => this.spawnRate,
             setSpawnRate: (spawnRate: GameDifficulty) => this.setSpawnRate(spawnRate),
             getMaxMonstersPerPen: () => this.maxMonstersPerPen,
